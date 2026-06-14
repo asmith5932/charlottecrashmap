@@ -365,7 +365,13 @@ map.on('load', ()=>{
 
   /* ---- Heatmap streams in behind ---- */
   fetch('heatmap_web.geojson').then(r=>r.json()).then(geo=>{
-    map.addSource('nkde',{type:'geojson',data:geo});
+    map.addSource('nkde',{
+      type:'geojson',
+      data:geo,
+      tolerance:0.1,    // less aggressive simplification -> keeps thin lixels at low zoom
+      buffer:128,       // wider tile buffer so edge features don't drop
+      maxzoom:14
+    });
     const nkdeLayer={
       id:'nkde', type:'line', source:'nkde',
       layout:{'line-cap':'round'},
