@@ -1,0 +1,1490 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
+<title>Charlotte High-Injury Network — Crash Density</title>
+<link href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css" rel="stylesheet" />
+<script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
+<style>
+  :root{
+    --ink:#1a1a1a;
+    --ink-soft:#5b5b58;
+    --line:#e3e1da;
+    --paper:#fbfaf7;
+    --brand:#0E75BA;          /* Sustain Charlotte blue (logo) */
+    --brand-green:#4FA838;    /* logo green, darkened for text legibility */
+    --brand-soft:#0E75BA14;
+    --hot:#E60000;            /* data ramp hot end */
+    --sans:"Helvetica Neue",Helvetica,Arial,sans-serif;
+    --mono:"SFMono-Regular",ui-monospace,"Roboto Mono",Menlo,monospace;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%;font-family:var(--sans);color:var(--ink);background:var(--paper)}
+  #map{position:absolute;inset:0}
+
+  /* ---- Title plate ---- */
+  .plate{
+    position:absolute;top:18px;left:18px;z-index:5;max-width:330px;
+    background:rgba(251,250,247,.92);backdrop-filter:blur(6px);
+    border:1px solid var(--line);border-radius:4px;padding:16px 18px;
+  }
+  .plate .eyebrow{
+    font:500 11px/1.3 var(--mono);letter-spacing:.14em;text-transform:uppercase;
+    color:var(--hot);margin:0 0 6px;
+  }
+  .plate-brand{display:flex;align-items:center;gap:8px;margin:0 0 14px;text-decoration:none;
+    padding-bottom:12px;border-bottom:1px solid var(--line)}
+  .plate-brand img{height:34px;width:auto;display:block;background:#000;border-radius:4px;padding:5px 8px}
+  .brand-fallback{display:none;font:600 15px/1 var(--sans);color:var(--brand);letter-spacing:-.01em}
+  .plate h1{font:600 19px/1.25 var(--sans);margin:0 0 8px;letter-spacing:-.01em}
+  .plate p{font:400 13px/1.5 var(--sans);color:var(--ink-soft);margin:0}
+
+  /* ---- Controls ---- */
+  .controls{
+    position:absolute;left:18px;bottom:22px;z-index:5;
+    background:rgba(251,250,247,.92);backdrop-filter:blur(6px);
+    border:1px solid var(--line);border-radius:4px;padding:12px 14px;min-width:210px;
+  }
+  .ctl-row{display:flex;align-items:center;gap:9px;cursor:pointer;user-select:none}
+  .ctl-row input{accent-color:var(--hot);width:15px;height:15px;cursor:pointer}
+  .ctl-row span{font:500 13px/1 var(--sans)}
+  .legend{margin-top:12px;padding-top:11px;border-top:1px solid var(--line)}
+  .legend .lab{font:500 10px/1.3 var(--mono);letter-spacing:.1em;text-transform:uppercase;color:var(--ink-soft);margin-bottom:6px}
+  .ramp{height:9px;border-radius:2px;background:linear-gradient(90deg,#fde9c8,#f2b347,#e0642f,#b5161b)}
+  .ramp-ends{display:flex;justify-content:space-between;font:400 10px/1.4 var(--mono);color:var(--ink-soft);margin-top:3px}
+
+  /* ---- Loading pill ---- */
+  .loading{
+    position:absolute;top:18px;right:18px;z-index:6;display:flex;align-items:center;gap:8px;
+    background:rgba(251,250,247,.95);border:1px solid var(--line);border-radius:20px;
+    padding:7px 14px;font:500 12px/1 var(--sans);color:var(--ink-soft);transition:opacity .4s}
+  .loading.done{opacity:0;pointer-events:none}
+  .spin{width:11px;height:11px;border:2px solid var(--line);border-top-color:var(--hot);border-radius:50%;animation:sp .8s linear infinite}
+  @keyframes sp{to{transform:rotate(360deg)}}
+
+  /* ---- Side panel ---- */
+  .panel{
+    position:absolute;top:0;right:0;height:100%;width:380px;max-width:88vw;z-index:7;
+    background:var(--paper);border-left:1px solid var(--line);
+    transform:translateX(100%);transition:transform .34s cubic-bezier(.4,0,.2,1);
+    display:flex;flex-direction:column;box-shadow:-8px 0 30px rgba(0,0,0,.06)}
+  .panel.open{transform:translateX(0)}
+  .panel-head{padding:26px 26px 18px;border-bottom:1px solid var(--line);position:relative}
+  .panel-close{position:absolute;top:18px;right:20px;width:28px;height:28px;border:none;background:none;
+    font-size:22px;line-height:1;color:var(--ink-soft);cursor:pointer;border-radius:3px}
+  .panel-close:hover{background:#0000000a;color:var(--ink)}
+  .panel .tag{font:500 10px/1.3 var(--mono);letter-spacing:.13em;text-transform:uppercase;color:var(--hot);margin:0 0 8px}
+  .panel h2{font:600 21px/1.2 var(--sans);margin:0;letter-spacing:-.015em;padding-right:30px}
+  .panel .sub{font:400 13px/1.4 var(--sans);color:var(--ink-soft);margin:7px 0 0}
+  .panel-body{padding:22px 26px;overflow-y:auto;flex:1}
+  .panel-body .blurb{font:400 15px/1.62 var(--sans);color:var(--ink);margin:0;white-space:pre-wrap}
+  .panel-body .placeholder{color:var(--ink-soft);font-style:italic}
+  .credit{position:absolute;bottom:0;left:0;right:0;z-index:4;background:var(--brand);color:#fff;
+    font:500 11px/1.3 var(--sans);text-align:center;padding:7px 12px;letter-spacing:.01em}
+  .credit a{color:#fff;text-decoration:underline;text-underline-offset:2px}
+  .ksi-note{font:400 11px/1.5 var(--sans);color:var(--ink-soft);margin:22px 0 0;padding-top:14px;border-top:1px solid var(--line)}
+
+  /* ---- About button + sheet ---- */
+  .about-btn{position:absolute;top:18px;right:64px;z-index:6;background:rgba(251,250,247,.94);
+    border:1px solid var(--line);border-radius:4px;padding:8px 13px;font:500 12px/1 var(--sans);
+    color:var(--ink);cursor:pointer;backdrop-filter:blur(6px);transition:background .15s,border-color .15s}
+  .about-btn:hover{background:#fff;border-color:#c9c7c0}
+  .about-wrap{position:absolute;inset:0;z-index:15;display:flex;align-items:center;justify-content:center;
+    background:rgba(26,26,26,.32);opacity:0;pointer-events:none;transition:opacity .25s}
+  .about-wrap.open{opacity:1;pointer-events:auto}
+  .about{background:var(--paper);border:1px solid var(--line);border-radius:8px;max-width:560px;width:90%;
+    max-height:82vh;overflow-y:auto;padding:30px 34px;box-shadow:0 20px 60px rgba(0,0,0,.18);
+    transform:translateY(12px);transition:transform .25s}
+  .about-wrap.open .about{transform:translateY(0)}
+  .about h2{font:600 20px/1.2 var(--sans);margin:0 0 4px;letter-spacing:-.01em}
+  .about .ab-tag{font:500 10px/1.3 var(--mono);letter-spacing:.13em;text-transform:uppercase;color:var(--hot);margin:0 0 14px}
+  .about h3{font:600 13px/1.3 var(--sans);margin:20px 0 6px;color:var(--ink)}
+  .about p{font:400 13px/1.6 var(--sans);color:var(--ink-soft);margin:0 0 8px}
+  .about a{color:var(--hot)}
+  .about-close{position:absolute;top:16px;right:18px;width:28px;height:28px;border:none;background:none;
+    font-size:22px;line-height:1;color:var(--ink-soft);cursor:pointer;border-radius:3px}
+  .about-close:hover{background:#0000000a;color:var(--ink)}
+  .stat-strip{display:flex;gap:18px;margin:0 0 20px;padding-bottom:18px;border-bottom:1px solid var(--line)}
+  .stat{flex:1}
+  .stat .n{font:600 22px/1 var(--sans);letter-spacing:-.02em}
+  .stat .l{font:500 10px/1.3 var(--mono);letter-spacing:.08em;text-transform:uppercase;color:var(--ink-soft);margin-top:5px}
+  .ksi-hero{background:var(--hot);color:#fff;border-radius:6px;padding:18px 20px;margin:0 0 14px}
+  .ksi-hero .n{font:600 40px/1 var(--sans);letter-spacing:-.03em}
+  .ksi-hero .l{font:500 11px/1.4 var(--sans);opacity:.92;margin-top:7px}
+  .ksi-hero .l span{opacity:.78}
+
+  .hint{position:absolute;bottom:22px;left:50%;transform:translateX(-50%);z-index:4;
+    background:rgba(26,26,26,.86);color:#fff;font:500 12px/1 var(--sans);padding:9px 16px;border-radius:20px;
+    transition:opacity .4s}
+  .hint.hide{opacity:0;pointer-events:none}
+
+  /* ---- Hover tooltip ---- */
+  .tip{position:absolute;z-index:8;pointer-events:none;background:rgba(26,26,26,.92);color:#fff;
+    font:500 12px/1.2 var(--sans);padding:6px 10px;border-radius:5px;white-space:nowrap;
+    transform:translate(-50%,-150%);opacity:0;transition:opacity .12s}
+  .tip.show{opacity:1}
+  .tip::after{content:"";position:absolute;left:50%;top:100%;transform:translateX(-50%);
+    border:5px solid transparent;border-top-color:rgba(26,26,26,.92)}
+
+  /* ---- Tour + view controls ---- */
+  .actions{position:absolute;top:18px;right:64px;z-index:6;display:flex;gap:8px}
+  .btn{background:rgba(251,250,247,.94);border:1px solid var(--line);border-radius:4px;
+    padding:8px 13px;font:500 12px/1 var(--sans);color:var(--ink);cursor:pointer;
+    display:flex;align-items:center;gap:7px;backdrop-filter:blur(6px);transition:background .15s,border-color .15s}
+  .btn:hover{background:#fff;border-color:#c9c7c0}
+  .btn .ic{font-size:13px}
+  .btn.live{border-color:var(--hot);color:var(--hot)}
+
+  /* ---- Intro overlay ---- */
+  .intro{position:absolute;inset:0;z-index:20;background:rgba(251,250,247,0);
+    display:flex;align-items:center;justify-content:center;pointer-events:none;transition:opacity .55s}
+  .intro-card{background:var(--paper);border:1px solid var(--line);border-radius:8px;
+    padding:34px 38px;max-width:440px;text-align:center;box-shadow:0 20px 60px rgba(0,0,0,.12);
+    transform:translateY(0);opacity:1;transition:opacity .55s,transform .55s;pointer-events:auto}
+  .intro.gone{opacity:0;pointer-events:none}
+  .intro.gone .intro-card{opacity:0;transform:translateY(18px);pointer-events:none}
+  .intro-card .eyebrow{font:500 11px/1.3 var(--mono);letter-spacing:.16em;text-transform:uppercase;color:var(--hot);margin:0 0 12px}
+  .intro-card h1{font:600 27px/1.18 var(--sans);letter-spacing:-.02em;margin:0 0 12px}
+  .intro-card p{font:400 15px/1.6 var(--sans);color:var(--ink-soft);margin:0 0 14px}
+  .intro-bignum{display:flex;justify-content:center;gap:28px;margin:20px 0 22px}
+  .intro-bignum .bn{text-align:center}
+  .intro-bignum .bn .n{font:600 32px/1 var(--sans);letter-spacing:-.02em;color:var(--hot)}
+  .intro-bignum .bn .l{font:500 10px/1.3 var(--mono);letter-spacing:.08em;text-transform:uppercase;color:var(--ink-soft);margin-top:6px}
+  .intro-card button{background:var(--ink);color:#fff;border:none;border-radius:5px;
+    padding:12px 26px;font:500 14px/1 var(--sans);cursor:pointer;transition:background .15s}
+  .intro-card button:hover{background:#000}
+
+  /* ---- Rank badge in panel ---- */
+  .rank-badge{display:inline-flex;align-items:center;gap:6px;background:var(--hot);color:#fff;
+    font:500 11px/1 var(--mono);letter-spacing:.05em;padding:5px 9px;border-radius:4px;margin-bottom:10px}
+
+  /* ---- Tour progress ---- */
+
+  @media(max-width:640px){
+    .plate{max-width:none;left:12px;right:12px;top:12px}
+    .controls{left:12px;bottom:14px}
+    .panel{width:100%;max-width:100%}
+    .hint{display:none}
+    .actions{right:12px;top:auto;bottom:90px}
+  }
+
+  /* ============ RANKINGS DASHBOARD (added) ============ */
+  /* entry button, lives inside the controls box */
+  .rk-open{margin-top:12px;width:100%;background:var(--ink);color:#fff;border:none;border-radius:4px;
+    padding:10px 12px;font:600 12px/1 var(--sans);letter-spacing:.01em;cursor:pointer;
+    display:flex;align-items:center;justify-content:space-between;gap:8px;transition:background .15s}
+  .rk-open:hover{background:#000}
+  .rk-open .arr{font:500 14px/1 var(--mono);opacity:.85}
+
+  /* slide-in panel (mirrors the right detail panel, from the left) */
+  .ranks{position:absolute;top:0;left:0;height:100%;width:372px;max-width:90vw;z-index:9;
+    background:var(--paper);border-right:1px solid var(--line);
+    transform:translateX(-100%);transition:transform .36s cubic-bezier(.4,0,.2,1);
+    display:flex;flex-direction:column;box-shadow:8px 0 34px rgba(0,0,0,.07)}
+  .ranks.open{transform:translateX(0)}
+  .rk-head{padding:24px 24px 16px;border-bottom:1px solid var(--line);position:relative}
+  .rk-close{position:absolute;top:16px;right:18px;width:28px;height:28px;border:none;background:none;
+    font-size:22px;line-height:1;color:var(--ink-soft);cursor:pointer;border-radius:3px}
+  .rk-close:hover{background:#0000000a;color:var(--ink)}
+  .rk-eyebrow{font:500 10px/1.3 var(--mono);letter-spacing:.14em;text-transform:uppercase;color:var(--hot);margin:0 0 8px}
+  .rk-head h2{font:600 20px/1.18 var(--sans);letter-spacing:-.015em;margin:0 0 10px;padding-right:30px}
+  .rk-summary{font:400 12.5px/1.55 var(--sans);color:var(--ink-soft);margin:0}
+  .rk-summary strong{color:var(--ink);font-weight:600}
+
+  .rk-tools{padding:14px 24px;border-bottom:1px solid var(--line);display:flex;flex-direction:column;gap:11px}
+  .rk-seg{display:flex;border:1px solid var(--line);border-radius:5px;overflow:hidden;background:#fff}
+  .rk-seg button{flex:1;border:none;background:none;padding:9px 6px;cursor:pointer;
+    font:500 11px/1 var(--sans);color:var(--ink-soft);transition:background .15s,color .15s;border-right:1px solid var(--line)}
+  .rk-seg button:last-child{border-right:none}
+  .rk-seg button.on{background:var(--ink);color:#fff}
+  .rk-seg button:not(.on):hover{background:#0000000a;color:var(--ink)}
+  .rk-tour{display:flex;align-items:center;justify-content:center;gap:8px;width:100%;
+    border:1px solid var(--hot);background:none;color:var(--hot);border-radius:5px;
+    padding:9px 12px;font:600 12px/1 var(--sans);cursor:pointer;transition:background .15s,color .15s}
+  .rk-tour:hover,.rk-tour.live{background:var(--hot);color:#fff}
+  .rk-tour .ic{font-size:10px;transform:translateY(.5px)}
+
+  .rk-pareto{padding:11px 24px;border-bottom:1px solid var(--line);
+    font:500 11px/1.45 var(--mono);letter-spacing:.01em;color:var(--ink);background:var(--brand-soft)}
+
+  .rk-list{flex:1;overflow-y:auto;padding:4px 24px 22px}
+  .rk-row{display:grid;grid-template-columns:24px 1fr auto;gap:13px;align-items:center;width:100%;
+    text-align:left;background:none;border:none;border-bottom:1px solid var(--line);
+    padding:13px 8px 13px 0;cursor:pointer;border-left:2px solid transparent;transition:background .15s}
+  .rk-row:hover{background:#0000000a}
+  .rk-row.active{background:var(--brand-soft);border-left-color:var(--hot);padding-left:8px}
+  .rk-num{font:600 12px/1 var(--mono);color:var(--ink-soft);align-self:start;padding-top:2px}
+  .rk-row.active .rk-num{color:var(--hot)}
+  .rk-mid{min-width:0}
+  .rk-name{display:block;font:600 13.5px/1.25 var(--sans);letter-spacing:-.01em;color:var(--ink);
+    white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .rk-area{display:block;font:500 9.5px/1.3 var(--mono);letter-spacing:.06em;text-transform:uppercase;
+    color:var(--ink-soft);margin:2px 0 7px}
+  .rk-track{display:block;height:6px;background:#eceae3;border-radius:3px;overflow:hidden}
+  .rk-bar{display:block;height:100%;border-radius:3px;width:0;transition:width .65s cubic-bezier(.2,.7,.2,1)}
+  .rk-val{text-align:right;white-space:nowrap}
+  .rk-num-big{display:block;font:600 17px/1 var(--sans);letter-spacing:-.02em;color:var(--ink)}
+  .rk-unit{display:block;font:500 8.5px/1.3 var(--mono);letter-spacing:.06em;text-transform:uppercase;color:var(--ink-soft);margin-top:3px}
+
+  @media(max-width:640px){ .ranks{width:100%;max-width:100%} }
+  @media(prefers-reduced-motion:reduce){ .rk-bar,.ranks{transition:none} }
+
+  /* ============================================================
+     ENHANCEMENTS — appended last so same-specificity rules win
+     ============================================================ */
+
+  /* semantic tokens layered over the base palette */
+  :root{
+    --surface:rgba(251,250,247,.92);
+    --surface-2:rgba(251,250,247,.78);
+    --surface-solid:#1a1a1a;
+    --surface-solid-hover:#000000;
+    --on-solid:#ffffff;
+    --grid:#e6e4dd;
+    --shadow:rgba(0,0,0,.10);
+  }
+
+  /* repoint existing chrome at the surface token (so night flips them) */
+  .plate,.controls,.btn,.about-btn{background:var(--surface)}
+  .plate,.controls{transition:background-color .45s,border-color .45s,color .45s}
+  .loading{transition:opacity .4s,background-color .45s,border-color .45s,color .45s}
+
+  /* solid (dark-on-light) buttons -> non-flipping tokens so they stay legible at night */
+  .rk-open,.intro-card button{background:var(--surface-solid);color:var(--on-solid)}
+  .rk-open:hover,.intro-card button:hover{background:var(--surface-solid-hover)}
+  .rk-seg button.on{background:var(--surface-solid);color:var(--on-solid)}
+
+  /* loading pill -> top center */
+  .loading{right:auto;left:50%;transform:translateX(-50%)}
+
+  /* hide the original standalone About button (replaced by the toolbar) */
+  .about-btn{display:none!important}
+
+  /* ---- Top-right toolbar ---- */
+  .toolbar{position:absolute;top:18px;right:18px;z-index:10;display:flex;gap:8px;align-items:center;
+    transition:opacity .25s,transform .25s}
+  body.panel-open .toolbar{opacity:0;pointer-events:none;transform:translateY(-6px)}
+  .toolbar .btn{padding:8px 12px}
+  .toolbar .btn svg{width:15px;height:15px;display:block;flex:0 0 auto}
+  .toolbar .btn .lbl{font:600 12px/1 var(--sans);letter-spacing:.01em}
+  @media(max-width:760px){ .toolbar .btn .lbl{display:none} .toolbar .btn{padding:9px 10px} }
+
+  /* ---- Night-mode vignette (under the UI, over the map) ---- */
+  .vignette{position:absolute;inset:0;z-index:3;pointer-events:none;opacity:0;transition:opacity .6s;
+    background:radial-gradient(125% 100% at 50% 32%, rgba(4,8,18,0) 52%, rgba(4,8,18,.55) 100%)}
+  body.night .vignette{opacity:1}
+
+  /* ---- 3D legend note (injected into the controls box) ---- */
+  .legend-3d{display:none;margin-top:11px;padding-top:11px;border-top:1px solid var(--line);
+    font:400 10.5px/1.45 var(--sans);color:var(--ink-soft);max-width:230px}
+  body.is-3d .legend-3d{display:block}
+  .legend-3d b{color:var(--ink);font-weight:600}
+
+  /* ============================================================
+     ANALYTICS DASHBOARD
+     ============================================================ */
+  .dash-wrap{position:absolute;inset:0;z-index:16;display:flex;align-items:center;justify-content:center;
+    background:rgba(10,14,22,.42);opacity:0;pointer-events:none;transition:opacity .25s;backdrop-filter:blur(2px)}
+  .dash-wrap.open{opacity:1;pointer-events:auto}
+  .dash{position:relative;background:var(--paper);border:1px solid var(--line);border-radius:10px;
+    max-width:880px;width:94%;max-height:90vh;overflow-y:auto;padding:30px 34px 32px;
+    box-shadow:0 30px 80px rgba(0,0,0,.28);transform:translateY(14px) scale(.99);transition:transform .28s}
+  .dash-wrap.open .dash{transform:none}
+  .dash-close{position:absolute;top:16px;right:18px;width:28px;height:28px;border:none;background:none;
+    font-size:22px;line-height:1;color:var(--ink-soft);cursor:pointer;border-radius:3px}
+  .dash-close:hover{background:#0000000a;color:var(--ink)}
+  .dash-tag{font:500 10px/1.3 var(--mono);letter-spacing:.14em;text-transform:uppercase;color:var(--hot);margin:0 0 6px}
+  .dash h2{font:600 23px/1.2 var(--sans);letter-spacing:-.02em;margin:0 0 6px}
+  .dash .dash-intro{font:400 13.5px/1.6 var(--sans);color:var(--ink-soft);margin:0 0 20px;max-width:64ch}
+
+  .kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin:0}
+  .kpi{border:1px solid var(--line);border-radius:8px;padding:15px 16px;background:var(--surface-2)}
+  .kpi .k-n{font:600 30px/1 var(--sans);letter-spacing:-.02em;color:var(--ink)}
+  .kpi.hot .k-n{color:var(--hot)}
+  .kpi .k-l{font:500 9.5px/1.3 var(--mono);letter-spacing:.08em;text-transform:uppercase;color:var(--ink-soft);margin-top:9px}
+
+  .dash-lede{font:500 13px/1.55 var(--sans);color:var(--ink);background:var(--brand-soft);
+    border-radius:8px;padding:12px 15px;margin:16px 0 4px}
+  .dash-lede strong{color:var(--hot);font-weight:700}
+
+  .dash-grid{display:grid;grid-template-columns:1.4fr 1fr;gap:26px;margin-top:20px}
+  .dash-sec-t{font:600 13px/1.3 var(--sans);margin:0 0 3px;color:var(--ink)}
+  .dash-sec-s{font:400 11.5px/1.5 var(--sans);color:var(--ink-soft);margin:0 0 12px}
+
+  .scatter-wrap{position:relative}
+  .scatter{width:100%;height:auto;display:block;overflow:visible}
+  .scatter .grid line{stroke:var(--grid);stroke-width:1}
+  .scatter .ax text{fill:var(--ink-soft);font:500 10px/1 var(--mono)}
+  .scatter .axt{fill:var(--ink);font:600 11px var(--sans)}
+  .scatter .blab text{fill:var(--ink);font:600 10px var(--sans);
+    paint-order:stroke;stroke:var(--paper);stroke-width:3px;stroke-linejoin:round}
+  .bub{stroke:var(--paper);stroke-width:1.5;cursor:pointer;transition:opacity .15s}
+  .scatter.dim .bub{opacity:.16}
+  .scatter.dim .bub.hot{opacity:1}
+  .bub-tip{position:absolute;pointer-events:none;background:rgba(16,22,36,.96);color:#fff;border-radius:6px;
+    padding:7px 10px;font:500 11px/1.4 var(--sans);white-space:nowrap;opacity:0;transition:opacity .12s;
+    transform:translate(-50%,-118%);z-index:2;box-shadow:0 6px 20px rgba(0,0,0,.25)}
+  .bub-tip.show{opacity:1}
+  .bub-tip b{font-weight:600}
+  .bub-tip .muted{color:#9fb0c9;font-weight:500}
+
+  .lead{display:flex;flex-direction:column}
+  .lead-row{display:grid;grid-template-columns:18px 1fr auto;gap:11px;align-items:center;
+    padding:10px 4px;border-bottom:1px solid var(--line);cursor:pointer;border-left:2px solid transparent;
+    transition:background .15s}
+  .lead-row:hover{background:#0000000a;border-left-color:var(--hot);padding-left:6px}
+  .lead-rank{font:600 11px/1 var(--mono);color:var(--ink-soft);align-self:start;padding-top:2px}
+  .lead-name{display:block;font:600 12.5px/1.25 var(--sans);color:var(--ink);
+    white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .lead-sub{display:block;font:500 9px/1.2 var(--mono);letter-spacing:.05em;text-transform:uppercase;color:var(--ink-soft);margin-top:3px}
+  .lead-bar-t{display:block;height:5px;background:var(--grid);border-radius:3px;overflow:hidden;margin-top:7px}
+  .lead-bar{display:block;height:100%;width:0;border-radius:3px;transition:width .7s cubic-bezier(.2,.7,.2,1)}
+  .lead-v{display:block;font:600 15px/1 var(--sans);text-align:right;color:var(--ink)}
+  .lead-vu{display:block;font:500 8px/1.2 var(--mono);text-transform:uppercase;letter-spacing:.05em;color:var(--ink-soft);text-align:right;margin-top:3px}
+
+  .dash-foot{font:400 11px/1.55 var(--sans);color:var(--ink-soft);margin:22px 0 0;padding-top:14px;border-top:1px solid var(--line)}
+
+  @media(max-width:760px){
+    .dash-grid{grid-template-columns:1fr;gap:22px}
+    .kpis{grid-template-columns:repeat(2,1fr)}
+    .dash{padding:26px 20px 26px}
+  }
+  @media(prefers-reduced-motion:reduce){
+    .dash,.dash-wrap,.lead-bar,.bub,.toolbar,.vignette{transition:none}
+  }
+
+  /* ============================================================
+     NIGHT THEME — flip the token values; everything cascades
+     ============================================================ */
+  body.night{
+    --ink:#eaf0f8;
+    --ink-soft:#94a3b8;
+    --line:#1f2c43;
+    --paper:#0e1422;
+    --brand:#2a93dd;
+    --brand-soft:#2a93dd1f;
+    --hot:#ff4d4d;
+    --surface:rgba(16,22,36,.80);
+    --surface-2:rgba(16,22,36,.62);
+    --surface-solid:#eaf0f8;
+    --surface-solid-hover:#ffffff;
+    --on-solid:#0e1422;
+    --grid:#1c2840;
+    --shadow:rgba(0,0,0,.5);
+  }
+  body.night{background:#0e1422}
+  body.night .btn:hover,body.night .about-btn:hover{background:#ffffff14;border-color:#33425e}
+  body.night .rk-row:hover{background:#ffffff10}
+  body.night .rk-row.active{background:#2a93dd22}
+  body.night .rk-seg{background:#0f1626}
+  body.night .rk-seg button:not(.on):hover{background:#ffffff10;color:var(--ink)}
+  body.night .panel-close:hover,body.night .rk-close:hover,
+  body.night .about-close:hover,body.night .dash-close:hover{background:#ffffff14;color:var(--ink)}
+  body.night .rk-track{background:#1b2740}
+  body.night .lead-row:hover{background:#ffffff10}
+  body.night .panel,body.night .ranks{box-shadow:-8px 0 34px rgba(0,0,0,.45)}
+  body.night .ranks{box-shadow:8px 0 34px rgba(0,0,0,.45)}
+  body.night .intro-card,body.night .about,body.night .dash{box-shadow:0 24px 70px rgba(0,0,0,.6)}
+
+  /* night: MapLibre controls + attribution */
+  body.night .maplibregl-ctrl-group{background:#121a2b;box-shadow:0 0 0 1px #25324b}
+  body.night .maplibregl-ctrl-group button+button{border-top-color:#25324b}
+  body.night .maplibregl-ctrl button .maplibregl-ctrl-icon{filter:invert(1) hue-rotate(180deg) brightness(1.1)}
+  body.night .maplibregl-ctrl-attrib.maplibregl-compact{background:rgba(16,22,36,.82)}
+  body.night .maplibregl-ctrl-attrib a{color:#94a3b8}
+  body.night .maplibregl-ctrl-attrib-button{filter:invert(1)}
+
+  body.night .tip,body.night .hint{background:rgba(4,8,18,.92)}
+  body.night .tip::after{border-top-color:rgba(4,8,18,.92)}
+
+</style>
+</head>
+<body>
+<div id="map"></div>
+
+<div class="intro" id="intro">
+  <div class="intro-card">
+    <p class="eyebrow">Charlotte · 2019–2023</p>
+    <h1>Some streets carry nearly all the harm</h1>
+    <div class="intro-bignum">
+      <div class="bn"><div class="n" id="iv-share">13%</div><div class="l">of streets</div></div>
+      <div class="bn"><div class="n">80%</div><div class="l">of severe crashes</div></div>
+      <div class="bn"><div class="n">29%</div><div class="l">are people walking/biking</div></div>
+    </div>
+    <p>A network-wide view of fatal and serious-injury crashes, 2019–2023.</p>
+    <button id="intro-go">Explore the map</button>
+  </div>
+</div>
+
+
+<div class="tip" id="tip"></div>
+
+<button class="about-btn" id="about-btn">About &amp; methodology</button>
+<div class="about-wrap" id="about-wrap">
+  <div class="about" role="dialog" aria-modal="true" aria-label="About and methodology">
+    <button class="about-close" id="about-close" aria-label="Close">×</button>
+    <p class="ab-tag">About this map</p>
+    <h2>Charlotte severe-crash density</h2>
+    <p>A network-based view of where killed-or-seriously-injured (KSI) crashes concentrate across Charlotte's streets, with detail on fourteen of the highest-injury corridors.</p>
+
+    <h3>What the colors show</h3>
+    <p>The warm ramp is a network kernel density estimate (NKDE) of KSI crashes — a measure of how tightly severe crashes cluster along the street network. Gray streets carry little or no severe-crash density; yellow, orange, and red mark rising concentration. Density classes match the published analysis.</p>
+
+    <h3>Corridor statistics</h3>
+    <p>For each highlighted corridor, the panel shows fatalities, serious injuries, total KSI, and KSI per mile (counts normalized by corridor length). Per-mile rates let short and long corridors be compared on equal footing; because some corridors are short, their per-mile rates are more sensitive to individual crashes and should be read as indicative rather than precise. Corridors that share an intersection may double-count crashes occurring at that junction.</p>
+
+    <h3>Data source</h3>
+    <p>Crash records: killed-or-seriously-injured crashes, 2019–2023, from the City of Charlotte open data portal. <em>[Add exact dataset name, URL, and the portal's data-license/attribution terms here.]</em> Corridor lengths derive from city street-centerline geometry.</p>
+
+    <h3>Limitations</h3>
+    <p>This is an analytical visualization, not a navigational tool, and is not intended to guide individual travel or routing decisions. Crash data reflects reported incidents and may contain omissions or classification errors present in the source records. Density and per-mile figures are estimates.</p>
+
+    <h3>Authorship</h3>
+    <p>Preliminary analysis prepared by a Sustain Charlotte intern for educational and advocacy purposes. Findings and interpretations are the author's and do not represent an official position of Sustain Charlotte, the City of Charlotte, or any other agency.</p>
+  </div>
+</div>
+
+<div class="plate">
+  <p class="eyebrow">Charlotte · 2019–2023 KSI</p>
+  <h1>Where serious crashes concentrate</h1>
+  <p>Network density of fatal and serious-injury crashes, 2019–2023.</p>
+</div>
+
+<div class="loading" id="loading"><span class="spin"></span><span id="loadtxt">Loading crash density…</span></div>
+
+<div class="controls">
+  <label class="ctl-row"><input type="checkbox" id="toggle-heat" checked><span>Crash density</span></label>
+  <div class="legend">
+    <div class="lab">Severe-crash density</div>
+    <div class="ramp" style="background:linear-gradient(90deg,#E1E1E1 0%,#E1E1E1 25%,#FFD37F 25%,#FFD37F 50%,#E69800 50%,#E69800 75%,#E60000 75%,#E60000 100%)"></div>
+    <div class="ramp-ends"><span>None</span><span>Highest</span></div>
+  </div>
+  <button class="rk-open" id="ranks-btn">View all 14 corridors<span class="arr">&rarr;</span></button>
+</div>
+
+<div class="hint" id="hint">Tap a marker to explore a corridor</div>
+
+<aside class="panel" id="panel" aria-hidden="true">
+  <div class="panel-head">
+    <button class="panel-close" id="panel-close" aria-label="Close panel">×</button>
+    <div id="p-rank"></div>
+    <p class="tag" id="p-tag">High-injury corridor</p>
+    <h2 id="p-name">—</h2>
+    <p class="sub" id="p-sub"></p>
+  </div>
+  <div class="panel-body">
+    <div id="p-stats" style="display:none">
+      <div class="ksi-hero">
+        <div class="n" id="p-permile">—</div>
+        <div class="l">severe crashes per mile <span id="p-len"></span></div>
+      </div>
+      <div class="stat-strip">
+        <div class="stat"><div class="n" id="p-fatal">—</div><div class="l">Fatal</div></div>
+        <div class="stat"><div class="n" id="p-serious">—</div><div class="l">Serious</div></div>
+        <div class="stat"><div class="n" id="p-ksi">—</div><div class="l">Total KSI</div></div>
+      </div>
+    </div>
+    <p class="blurb" id="p-blurb"></p>
+    <p class="ksi-note" id="p-ksinote">Killed-or-seriously-injured (KSI) crashes, 2019–2023, normalized by corridor length. Corridors that share an intersection may double-count crashes at that junction.</p>
+  </div>
+</aside>
+
+<aside class="ranks" id="ranks" aria-hidden="true" aria-label="Corridor rankings">
+  <div class="rk-head">
+    <button class="rk-close" id="rk-close" aria-label="Close rankings">&times;</button>
+    <p class="rk-eyebrow">All corridors &middot; ranked</p>
+    <h2>The network in rank</h2>
+    <p class="rk-summary" id="rk-summary"></p>
+  </div>
+  <div class="rk-tools">
+    <div class="rk-seg" role="group" aria-label="Sort corridors by">
+      <button data-sort="ksi" class="on">Total KSI</button>
+      <button data-sort="fatal">Fatalities</button>
+      <button data-sort="permile">Per mile</button>
+    </div>
+    <button class="rk-tour" id="rk-tour"><span class="ic">&#9654;</span><span class="rk-tour-lab">Play tour</span></button>
+  </div>
+  <div class="rk-pareto" id="rk-pareto"></div>
+  <div class="rk-list" id="rk-list"></div>
+</aside>
+
+  <!-- ============================================================
+       ENHANCEMENT UI  (additive — degrades gracefully)
+       ============================================================ -->
+
+  <!-- Night-mode vignette: sits over the map, under the chrome -->
+  <div class="vignette" id="vignette"></div>
+
+  <!-- Top-right command toolbar -->
+  <div class="toolbar" id="toolbar">
+    <button class="btn" id="tb-analytics" type="button" title="Analytics  (A)" aria-label="Open analytics">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M4 4v16h16"/><path d="M8.5 20v-5"/><path d="M13 20v-9"/><path d="M17.5 20v-6.5"/>
+      </svg>
+      <span class="lbl">Analytics</span>
+    </button>
+    <button class="btn" id="tb-3d" type="button" title="3D crash towers  (D)" aria-label="Toggle 3D view">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M12 2.5 21 7.5v9L12 21.5 3 16.5v-9z"/><path d="M3 7.5 12 12.5 21 7.5"/><path d="M12 12.5v9"/>
+      </svg>
+      <span class="lbl">3D view</span>
+    </button>
+    <button class="btn" id="tb-night" type="button" title="Night mode  (N)" aria-label="Toggle night mode">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M20 14.5A8 8 0 1 1 9.5 4a6.5 6.5 0 0 0 10.5 10.5z"/>
+      </svg>
+      <span class="lbl">Night</span>
+    </button>
+    <button class="btn" id="tb-about" type="button" title="About this map  (B)" aria-label="About this map">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <circle cx="12" cy="12" r="9"/><path d="M12 11v5"/><path d="M12 7.6h.01"/>
+      </svg>
+      <span class="lbl">About</span>
+    </button>
+  </div>
+
+  <!-- Analytics dashboard (built from corridor metadata at open time) -->
+  <div class="dash-wrap" id="dash-wrap">
+    <div class="dash" role="dialog" aria-modal="true" aria-label="Network analytics">
+      <button class="dash-close" id="dash-close" type="button" aria-label="Close">&times;</button>
+      <div class="dash-tag">Network Analytics</div>
+      <h2>The shape of severe crashes</h2>
+      <p class="dash-intro">Every corridor on Charlotte&rsquo;s High-Injury Network, measured the way a safety review reads it &mdash; how the harm splits between deaths and serious injuries, and how concentrated it is per mile of street.</p>
+
+      <div class="kpis" id="dash-kpis"></div>
+      <div class="dash-lede" id="dash-lede"></div>
+
+      <div class="dash-grid">
+        <div class="scatter-side">
+          <div class="dash-sec-t">Fatalities vs. serious injuries</div>
+          <div class="dash-sec-s">Each bubble is a corridor &mdash; bigger and redder where more people are killed or seriously injured. Hover for detail; click to fly there.</div>
+          <div class="scatter-wrap" id="scatter-wrap"></div>
+        </div>
+        <div class="lead-side">
+          <div class="dash-sec-t">Most dangerous per mile</div>
+          <div class="dash-sec-s">KSI per street-mile, normalizing for corridor length.</div>
+          <div class="lead" id="dash-lead"></div>
+        </div>
+      </div>
+
+      <p class="dash-foot" id="dash-foot"></p>
+    </div>
+  </div>
+
+
+<script>
+/* ============================================================
+   CORRIDOR METADATA
+   Keyed by POINT OBJECTID (1-14). lineId = matching corridor
+   line OBJECTID. Fill `blurb` (and optional fatal/serious) later.
+   ============================================================ */
+const CORRIDORS = {
+  1:  {lineId:12, name:"Nations Ford Road",                      extent:"Arrowood Road → I-77",                  area:"Colony Acres",                  miles:0.37, serious:8,  fatal:2,  blurb:""},
+  2:  {lineId:14, name:"West Boulevard",                         extent:"Ross Avenue → Fordham Road",            area:"Revolution Park",               miles:0.38, serious:3,  fatal:6,  blurb:""},
+  3:  {lineId:10, name:"Brookshire Boulevard",                   extent:"Idaho Drive → Hoskins Road",            area:"Thomasboro-Hoskins",            miles:0.33, serious:6,  fatal:3,  blurb:""},
+  4:  {lineId:9,  name:"Beatties Ford Road",                     extent:"Saint John Street → Griers Grove Road", area:"Lincoln Heights",               miles:0.63, serious:6,  fatal:5,  blurb:""},
+  5:  {lineId:13, name:"West Sugar Creek Road",                  extent:"Munsee Street → Graham Street",         area:"Sugar Creek / Mineral Springs", miles:0.64, serious:8,  fatal:4,  blurb:""},
+  6:  {lineId:11, name:"Old Statesville Road",                   extent:"Gibbon Road → Beatties Ford Road",      area:"Slater Road / Hamilton Circle", miles:0.63, serious:7,  fatal:8,  blurb:""},
+  7:  {lineId:15, name:"University City Boulevard",              extent:"Harris Houston Road → I-85",            area:"University City",               miles:1.64, serious:14, fatal:6,  blurb:""},
+  8:  {lineId:7,  name:"North Tryon Street",                     extent:"Craighead Road → WT Harris Boulevard",  area:"University City / Hidden Valley",miles:1.90, serious:13, fatal:14, blurb:""},
+  9:  {lineId:8,  name:"The Plaza",                              extent:"East 36th Street → Milton Road",        area:"Plaza-Shamrock / NoDa",         miles:1.06, serious:5,  fatal:8,  blurb:""},
+  10: {lineId:5,  name:"Eastway Drive",                          extent:"Central Avenue → North Tryon Street",   area:"Plaza-Shamrock",                miles:1.22, serious:9,  fatal:6,  blurb:""},
+  11: {lineId:1,  name:"Independence Boulevard",                 extent:"Conference Drive → Norland Road",       area:"Woodberry Forest",              miles:0.92, serious:4,  fatal:8,  blurb:""},
+  12: {lineId:3,  name:"Sharon Amity Road / WT Harris Boulevard",extent:"Albemarle Road → Grier Road",           area:"Eastland / Hickory Grove",      miles:1.93, serious:7,  fatal:14, blurb:""},
+  13: {lineId:4,  name:"WT Harris Boulevard",                    extent:"Albemarle Road → Sharon Amity Road",    area:"Hickory Grove",                 miles:1.07, serious:10, fatal:6,  blurb:""},
+  14: {lineId:2,  name:"Albemarle Road / Central Avenue",        extent:"WT Harris Boulevard → Norland Road",    area:"Eastland",                      miles:1.08, serious:12, fatal:8,  blurb:""}
+};
+
+const map = new maplibregl.Map({
+  container:'map',
+  style:'https://basemaps.cartocdn.com/gl/positron-gl-style/style.json',
+  center:[-80.82,35.24],
+  zoom:10.4,
+  minZoom:9.6,
+  maxZoom:17,
+  pitch:0,
+  maxPitch:0,
+  pitchWithRotate:false,
+  dragRotate:false,
+  attributionControl:{compact:true}
+});
+map.addControl(new maplibregl.NavigationControl({showCompass:true,visualizePitch:true}),'bottom-right');
+
+let selectedPointId = null;
+let corridorsData = null;
+let pulseRAF = null;
+
+map.on('load', ()=>{
+  /* ---- Hotspots first (instant) ---- */
+  Promise.all([
+    fetch('corridors.geojson').then(r=>r.json()),
+    fetch('corridorpoints.json').then(r=>r.json())
+  ]).then(([lines,points])=>{
+    corridorsData = lines;
+
+    map.addSource('corridors',{type:'geojson',data:lines});
+    // selection casing — a wide soft halo. Moved BENEATH the heatmap once it loads,
+    // so the crash-density colors ride on top and stay fully visible.
+    map.addLayer({
+      id:'corridor-casing', type:'line', source:'corridors',
+      layout:{'line-cap':'round','line-join':'round'},
+      paint:{'line-color':'#969691','line-width':7,'line-opacity':0,'line-blur':0.4},
+      filter:['==','OBJECTID',-1]
+    });
+
+    map.addSource('points',{type:'geojson',data:points});
+    map.addLayer({
+      id:'point-halo', type:'circle', source:'points',
+      paint:{
+        'circle-radius':['interpolate',['linear'],['zoom'],9,10,12,14,15,18],
+        'circle-color':'#E60000','circle-opacity':0.12
+      }
+    });
+    map.addLayer({
+      id:'point-dot', type:'circle', source:'points',
+      paint:{
+        'circle-radius':['interpolate',['linear'],['zoom'],9,5,12,6.5,15,8],
+        'circle-color':'#E60000',
+        'circle-stroke-width':2,'circle-stroke-color':'#fff'
+      }
+    });
+    // small marker for the selected point so it doesn't cover the corridor
+    map.addLayer({
+      id:'point-sel', type:'circle', source:'points',
+      paint:{
+        'circle-radius':3.5,
+        'circle-color':'#fff',
+        'circle-stroke-width':2,'circle-stroke-color':'#E60000'
+      },
+      filter:['==','OBJECTID',-1]
+    });
+
+    map.on('click','point-dot',e=>selectPoint(e.features[0].properties.OBJECTID));
+    map.on('mouseenter','point-dot',e=>{
+      map.getCanvas().style.cursor='pointer';
+      const pid=e.features[0].properties.OBJECTID;
+      const meta=CORRIDORS[pid]; if(!meta) return;
+      const tip=document.getElementById('tip');
+      tip.textContent=meta.name;
+      tip.classList.add('show');
+    });
+    map.on('mousemove','point-dot',e=>{
+      const tip=document.getElementById('tip');
+      tip.style.left=e.point.x+'px'; tip.style.top=e.point.y+'px';
+    });
+    map.on('mouseleave','point-dot',()=>{
+      map.getCanvas().style.cursor='';
+      document.getElementById('tip').classList.remove('show');
+    });
+  });
+
+  /* ---- Heatmap streams in behind ---- */
+  fetch('heatmap_web.geojson').then(r=>r.json()).then(geo=>{
+    map.addSource('nkde',{
+      type:'geojson',
+      data:geo,
+      tolerance:0.1,    // less aggressive simplification -> keeps thin lixels at low zoom
+      buffer:128,       // wider tile buffer so edge features don't drop
+      maxzoom:14
+    });
+    const nkdeLayer={
+      id:'nkde', type:'line', source:'nkde',
+      layout:{'line-cap':'round'},
+      paint:{
+        'line-width':['interpolate',['linear'],['zoom'],
+          9,  ['step',['get','density'], 0.8, 0.000372,1.6, 0.000736,1.6, 0.001430,2.2],
+          11, ['step',['get','density'], 0.5, 0.000372,1.2, 0.000736,1.2, 0.001430,1.8],
+          14, ['step',['get','density'], 0.7, 0.000372,2.2, 0.000736,2.2, 0.001430,3.4]
+        ],
+        'line-color':['step',['get','density'],
+          '#E1E1E1',          /* 0 - 0.000371  gray */
+          0.000372,'#FFD37F',  /* yellow */
+          0.000736,'#E69800',  /* orange */
+          0.001430,'#E60000'   /* red */
+        ],
+        'line-opacity':['step',['get','density'],
+          0.22,                /* gray streets sit well back */
+          0.000372,0.9
+        ]
+      }
+    };
+    // insert nkde beneath the basemap's first symbol (label) layer,
+    // so street names + road labels always draw on top of the density
+    let beforeId = map.getLayer('point-halo') ? 'point-halo' : undefined;
+    try{
+      const lyrs = map.getStyle().layers;
+      const firstSymbol = lyrs.find(l=>l.type==='symbol');
+      if(firstSymbol) beforeId = firstSymbol.id;
+    }catch(e){}
+    map.addLayer(nkdeLayer, beforeId);
+    doneLoading();
+  }).catch(()=>{ doneLoading('Density layer failed to load'); });
+});
+
+function doneLoading(msg){
+  const l=document.getElementById('loading');
+  if(msg){document.getElementById('loadtxt').textContent=msg;return;}
+  l.classList.add('done');
+}
+
+function selectPoint(pid){
+  const meta = CORRIDORS[pid];
+  if(!meta) return;
+  selectedPointId = pid;
+
+  // frame the corridor with a casing drawn BENEATH the heatmap (density rides on top, stays visible)
+  map.setFilter('corridor-casing',['==','OBJECTID',meta.lineId]);
+  map.setFilter('point-sel',['==','OBJECTID',pid]);
+  map.setFilter('point-dot',['!=','OBJECTID',pid]);
+  map.setFilter('point-halo',['!=','OBJECTID',pid]);
+
+  startPulse();
+  zoomToCorridor(meta.lineId);
+
+  // panel content
+  document.getElementById('p-rank').innerHTML = '';
+  document.getElementById('p-tag').textContent  = meta.area || 'High-injury corridor';
+  document.getElementById('p-name').textContent = meta.name;
+  document.getElementById('p-sub').textContent  = meta.extent || '';
+  const blurbEl = document.getElementById('p-blurb');
+  if(meta.blurb && meta.blurb.trim()){
+    blurbEl.textContent = meta.blurb; blurbEl.classList.remove('placeholder');
+  }else{
+    blurbEl.textContent = "Blurb for "+meta.name+" goes here. Edit the CORRIDORS table in the page source to add it.";
+    blurbEl.classList.add('placeholder');
+  }
+  const stats=document.getElementById('p-stats');
+  if(meta.fatal!=null||meta.serious!=null){
+    stats.style.display='block';
+    const f=meta.fatal??0, s=meta.serious??0, ksi=f+s;
+    const perMile = meta.miles ? (ksi/meta.miles) : null;
+    document.getElementById('p-permile').textContent = perMile!=null ? perMile.toFixed(1) : '—';
+    document.getElementById('p-len').textContent = meta.miles ? '('+meta.miles.toFixed(2)+' mi)' : '';
+    document.getElementById('p-fatal').textContent = f;
+    document.getElementById('p-serious').textContent = s;
+    document.getElementById('p-ksi').textContent = ksi;
+  }else stats.style.display='none';
+
+  document.getElementById('panel').classList.add('open');
+  document.getElementById('panel').setAttribute('aria-hidden','false');
+  document.getElementById('hint').classList.add('hide');
+}
+
+function zoomToCorridor(lineId){
+  if(!corridorsData) return;
+  const f = corridorsData.features.find(ft=>ft.properties.OBJECTID===lineId);
+  if(!f) return;
+  const b = new maplibregl.LngLatBounds();
+  const addCoords = c => Array.isArray(c[0]) ? c.forEach(addCoords) : b.extend(c);
+  addCoords(f.geometry.coordinates);
+  const panelW = window.innerWidth>640 ? 400 : 0;  // leave room for the side panel
+  const ranksW = (document.getElementById('ranks')?.classList.contains('open') && window.innerWidth>980) ? 388 : 0;
+  map.fitBounds(b,{padding:{top:90,bottom:90,left:80+ranksW,right:80+panelW},duration:800,maxZoom:14.5});
+}
+
+let pulseT0=null;
+function startPulse(){
+  cancelAnimationFrame(pulseRAF);
+  if(map.getLayer('corridor-casing')){
+    map.setPaintProperty('corridor-casing','line-opacity',0.9);
+    map.setPaintProperty('corridor-casing','line-width',7);
+  }
+}
+
+function closePanel(){
+  document.getElementById('panel').classList.remove('open');
+  document.getElementById('panel').setAttribute('aria-hidden','true');
+  cancelAnimationFrame(pulseRAF); pulseRAF=null;
+  map.setFilter('corridor-casing',['==','OBJECTID',-1]);
+  if(map.getLayer('corridor-casing')) map.setPaintProperty('corridor-casing','line-opacity',0);
+  map.setFilter('point-sel',['==','OBJECTID',-1]);
+  map.setFilter('point-dot',['!=','OBJECTID',-9999]);   // show all again
+  map.setFilter('point-halo',['!=','OBJECTID',-9999]);
+  selectedPointId=null;
+}
+document.getElementById('panel-close').addEventListener('click',closePanel);
+document.addEventListener('keydown',e=>{if(e.key==='Escape')closePanel();});
+
+document.getElementById('toggle-heat').addEventListener('change',e=>{
+  const v=e.target.checked?'visible':'none';
+  if(map.getLayer('nkde')) map.setLayoutProperty('nkde','visibility',v);
+});
+
+/* ===================== INTRO OVERLAY + OPENING MOVE ===================== */
+let introDismissed=false;
+function dismissIntro(){
+  if(introDismissed) return; introDismissed=true;
+  const intro=document.getElementById('intro');
+  intro.classList.add('gone');
+  setTimeout(()=>{ intro.style.display='none'; },600);
+  // cinematic opening: gentle rotate + zoom into the city
+  map.easeTo({center:[-80.82,35.24],zoom:11,bearing:0,pitch:0,duration:2600,easing:t=>t*(2-t)});
+  setTimeout(()=>document.getElementById('hint').classList.remove('hide'),2600);
+}
+document.getElementById('intro-go').addEventListener('click',dismissIntro);
+
+/* ===================== ABOUT / METHODOLOGY SHEET ===================== */
+const aboutWrap=document.getElementById('about-wrap');
+document.getElementById('about-btn').addEventListener('click',()=>aboutWrap.classList.add('open'));
+document.getElementById('about-close').addEventListener('click',()=>aboutWrap.classList.remove('open'));
+aboutWrap.addEventListener('click',e=>{ if(e.target===aboutWrap) aboutWrap.classList.remove('open'); });
+document.addEventListener('keydown',e=>{ if(e.key==='Escape') aboutWrap.classList.remove('open'); });
+
+/* ===================== CORRIDOR RANKINGS DASHBOARD (added) ===================== */
+(function(){
+  const RK = Object.entries(CORRIDORS).map(([pid,m])=>{
+    const fatal=m.fatal||0, serious=m.serious||0, ksi=fatal+serious;
+    return Object.assign({}, m, {pid:+pid, fatal, serious, ksi, perMile: m.miles ? ksi/m.miles : 0});
+  });
+  const SORTS = {
+    ksi:     {get:c=>c.ksi,     fmt:v=>v,             unit:'total KSI'},
+    fatal:   {get:c=>c.fatal,   fmt:v=>v,             unit:'fatal'},
+    permile: {get:c=>c.perMile, fmt:v=>v.toFixed(1),  unit:'KSI / mi'}
+  };
+  let sortKey='ksi', activePid=null;
+
+  const panel    = document.getElementById('ranks');
+  const listEl   = document.getElementById('rk-list');
+  const sumEl    = document.getElementById('rk-summary');
+  const paretoEl = document.getElementById('rk-pareto');
+  const tourBtn  = document.getElementById('rk-tour');
+
+  // headline: what these 14 corridors carry, computed from the data
+  const tot = RK.reduce((a,c)=>({f:a.f+c.fatal,s:a.s+c.serious,mi:a.mi+(c.miles||0)}),{f:0,s:0,mi:0});
+  sumEl.innerHTML = '<strong>'+(tot.f+tot.s)+'</strong> severe crashes &mdash; '+tot.f+
+    ' fatal &middot; '+tot.s+' serious &mdash; concentrate on these 14 corridors, just '+
+    tot.mi.toFixed(1)+' miles of street.';
+
+  // warm ramp matching the map's density colors
+  function rampColor(t){ return t>=0.66 ? '#E60000' : t>=0.33 ? '#E69800' : '#FFD37F'; }
+
+  function sorted(){ return RK.slice().sort((a,b)=>SORTS[sortKey].get(b)-SORTS[sortKey].get(a)); }
+
+  function render(animate){
+    const s = SORTS[sortKey], rows = sorted(), max = s.get(rows[0]) || 1;
+    const totalKsi = RK.reduce((a,c)=>a+c.ksi,0);
+    const top5 = RK.slice().sort((a,b)=>b.ksi-a.ksi).slice(0,5).reduce((a,c)=>a+c.ksi,0);
+    paretoEl.textContent = 'Top 5 corridors carry '+Math.round(top5/totalKsi*100)+'% of the KSI on this list.';
+
+    listEl.innerHTML = rows.map((c,i)=>{
+      const v=s.get(c), t=v/max, on=c.pid===activePid?' active':'';
+      return '<button class="rk-row'+on+'" data-pid="'+c.pid+'">'+
+        '<span class="rk-num">'+String(i+1).padStart(2,'0')+'</span>'+
+        '<span class="rk-mid">'+
+          '<span class="rk-name">'+c.name+'</span>'+
+          '<span class="rk-area">'+(c.area||'')+'</span>'+
+          '<span class="rk-track"><span class="rk-bar" style="width:'+(animate?0:t*100)+'%;background:'+rampColor(t)+'"></span></span>'+
+        '</span>'+
+        '<span class="rk-val"><span class="rk-num-big">'+s.fmt(v)+'</span><span class="rk-unit">'+s.unit+'</span></span>'+
+      '</button>';
+    }).join('');
+
+    listEl.querySelectorAll('.rk-row').forEach(row=>{
+      row.addEventListener('click',()=>{
+        const pid=+row.dataset.pid;
+        setActive(pid);
+        if(window.innerWidth<=980) closeRanks();
+        try{ selectPoint(pid); }catch(e){}
+      });
+    });
+
+    if(animate){
+      requestAnimationFrame(()=>requestAnimationFrame(()=>{
+        listEl.querySelectorAll('.rk-bar').forEach((bar,i)=>{
+          bar.style.width=(s.get(rows[i])/max*100)+'%';
+        });
+      }));
+    }
+  }
+
+  function setActive(pid){
+    activePid=pid;
+    listEl.querySelectorAll('.rk-row').forEach(r=>r.classList.toggle('active',+r.dataset.pid===pid));
+  }
+
+  document.querySelectorAll('.rk-seg button').forEach(b=>{
+    b.addEventListener('click',()=>{
+      sortKey=b.dataset.sort;
+      document.querySelectorAll('.rk-seg button').forEach(x=>x.classList.toggle('on',x===b));
+      render(true);
+    });
+  });
+
+  function openRanks(){ panel.classList.add('open'); panel.setAttribute('aria-hidden','false');
+    document.getElementById('hint')?.classList.add('hide'); render(true); }
+  function closeRanks(){ panel.classList.remove('open'); panel.setAttribute('aria-hidden','true'); stopTour(); }
+
+  document.getElementById('ranks-btn').addEventListener('click',openRanks);
+  document.getElementById('rk-close').addEventListener('click',closeRanks);
+  document.addEventListener('keydown',e=>{ if(e.key==='Escape') closeRanks(); });
+
+  /* ---- guided tour: cinematic walk through the ranking, top to bottom ---- */
+  let tourTimer=null, tourIdx=0, touring=false;
+  function step(order){
+    if(tourIdx>=order.length){ stopTour(); return; }
+    const c=order[tourIdx];
+    setActive(c.pid);
+    const row=listEl.querySelector('.rk-row[data-pid="'+c.pid+'"]');
+    if(row) row.scrollIntoView({block:'nearest',behavior:'smooth'});
+    try{ selectPoint(c.pid); }catch(e){}
+    tourIdx++;
+    tourTimer=setTimeout(()=>step(order),4200);
+  }
+  function startTour(){
+    if(touring){ stopTour(); return; }
+    touring=true; tourIdx=0;
+    tourBtn.classList.add('live'); tourBtn.querySelector('.rk-tour-lab').textContent='Stop tour';
+    step(sorted());
+  }
+  function stopTour(){
+    touring=false; clearTimeout(tourTimer); tourTimer=null;
+    tourBtn.classList.remove('live'); tourBtn.querySelector('.rk-tour-lab').textContent='Play tour';
+  }
+  tourBtn.addEventListener('click',startTour);
+
+  // keep the ranking list in sync if a corridor is selected from the map itself
+  const _orig = window.selectPoint;
+  if(typeof _orig==='function'){
+    window.selectPoint=function(pid){ setActive(pid); return _orig.apply(this,arguments); };
+  }
+})();
+
+</script>
+
+<script>
+/* ============================================================
+   ENHANCEMENTS (additive layer over the base map)
+   - 3D crash towers (fill-extrusion, height = KSI)
+   - Night / command-center mode (basemap swap, theme flip)
+   - Linked analytics dashboard (KPIs, SVG scatter, leaderboard)
+   - Count-up animations, breathing crash points, toolbar, hotkeys
+   Every feature degrades gracefully if a data file is missing.
+   Globals (map, CORRIDORS, corridorsData) are reached by bare name;
+   window.selectPoint / window.zoomToCorridor are wrapped, not replaced.
+   ============================================================ */
+(function(){
+  'use strict';
+
+  var RM = false;
+  try { RM = window.matchMedia('(prefers-reduced-motion:reduce)').matches; } catch(e){}
+
+  /* ---------- derived data (honest, from CORRIDORS only) ---------- */
+  function rkData(){
+    return Object.keys(CORRIDORS).map(function(k){
+      var m = CORRIDORS[k];
+      var fatal = m.fatal || 0, serious = m.serious || 0, ksi = fatal + serious;
+      return { pid:+k, name:m.name, area:m.area, miles:m.miles,
+               fatal:fatal, serious:serious, ksi:ksi,
+               perMile: m.miles ? ksi/m.miles : 0 };
+    });
+  }
+  var ALL = rkData();
+  var T = {
+    ksi:     ALL.reduce(function(a,c){return a+c.ksi;},0),
+    fatal:   ALL.reduce(function(a,c){return a+c.fatal;},0),
+    serious: ALL.reduce(function(a,c){return a+c.serious;},0),
+    miles:   ALL.reduce(function(a,c){return a+c.miles;},0)
+  };
+  var PMmin = Math.min.apply(null, ALL.map(function(d){return d.perMile;}));
+  var PMmax = Math.max.apply(null, ALL.map(function(d){return d.perMile;}));
+  var KSImax = Math.max.apply(null, ALL.map(function(d){return d.ksi;}));
+
+  function byPid(pid){ for(var i=0;i<ALL.length;i++){ if(ALL[i].pid===pid) return ALL[i]; } return null; }
+  function shortName(n){ return n.split(' / ')[0].replace(/ (Road|Boulevard|Street|Drive|Avenue)$/,''); }
+
+  /* warm ramp matching the map's density colors (#FFE2A8 -> #E69800 -> #E60000) */
+  function ramp(t){
+    t = Math.max(0, Math.min(1, t));
+    var stops = [[255,226,168],[230,152,0],[230,0,0]];
+    var seg = t < 0.5 ? 0 : 1;
+    var lt  = t < 0.5 ? t/0.5 : (t-0.5)/0.5;
+    var a = stops[seg], b = stops[seg+1];
+    var r = Math.round(a[0]+(b[0]-a[0])*lt);
+    var g = Math.round(a[1]+(b[1]-a[1])*lt);
+    var bl= Math.round(a[2]+(b[2]-a[2])*lt);
+    return 'rgb('+r+','+g+','+bl+')';
+  }
+
+  /* ---------- small element cache ---------- */
+  var dashWrap = document.getElementById('dash-wrap');
+  var btn3d    = document.getElementById('tb-3d');
+  var btnNight = document.getElementById('tb-night');
+  var tipEl    = document.getElementById('tip');
+
+  /* =====================================================
+     COUNT-UP ANIMATIONS
+     ===================================================== */
+  function animateNumber(el, target, dec, dur, suffix){
+    suffix = suffix || '';
+    if(RM){ el.textContent = (dec ? target.toFixed(dec) : Math.round(target)) + suffix; return; }
+    var t0 = performance.now();
+    function tick(now){
+      var p = Math.min(1, (now - t0)/dur);
+      var e = 1 - Math.pow(1-p, 3);
+      el.textContent = (dec ? (target*e).toFixed(dec) : Math.round(target*e)) + suffix;
+      if(p < 1) requestAnimationFrame(tick);
+    }
+    requestAnimationFrame(tick);
+  }
+
+  function introCounts(){
+    var nodes = document.querySelectorAll('.intro-bignum .bn .n');
+    Array.prototype.forEach.call(nodes, function(el){
+      var raw = (el.textContent || '').trim();
+      var m = raw.match(/^(\d+)(\D*)$/);
+      if(!m) return;
+      animateNumber(el, +m[1], 0, 1300, m[2] || '');
+    });
+  }
+
+  /* =====================================================
+     BREATHING CRASH POINTS (subtle life on the halo layer)
+     ===================================================== */
+  var breatheRAF = null, bT0 = null;
+  function breathe(now){
+    if(bT0 === null) bT0 = now;
+    if(map.getLayer && map.getLayer('point-halo')){
+      var v = 0.15 + 0.06 * Math.sin((now - bT0)/1400);
+      try { map.setPaintProperty('point-halo','circle-opacity', v); } catch(e){}
+    }
+    breatheRAF = requestAnimationFrame(breathe);
+  }
+  document.addEventListener('visibilitychange', function(){
+    if(document.hidden){ if(breatheRAF){ cancelAnimationFrame(breatheRAF); breatheRAF = null; } }
+    else if(!RM && !breatheRAF){ bT0 = null; breatheRAF = requestAnimationFrame(breathe); }
+  });
+
+  /* =====================================================
+     3D CRASH TOWERS
+     ===================================================== */
+  var is3D = false;
+  var selTower = null;
+  var towersReady = false;
+
+  function hexRing(lng, lat, r){
+    var ring = [];
+    var latM = 111320;
+    var lngM = 111320 * Math.cos(lat * Math.PI/180) || 111320;
+    for(var i=0;i<=6;i++){
+      var a = Math.PI/180 * (60*i - 30);
+      ring.push([ lng + (r*Math.cos(a))/lngM, lat + (r*Math.sin(a))/latM ]);
+    }
+    return ring;
+  }
+
+  function towerColorExpr(){
+    return ['step', ['get','ksi'], '#FFE2A8', 10, '#FFD37F', 14, '#E69800', 20, '#E60000'];
+  }
+
+  function setTowerSel(pid){
+    if(!(map.getSource && map.getSource('towers'))){ selTower = (pid==null?null:+pid); return; }
+    if(selTower != null){ try{ map.setFeatureState({source:'towers', id:selTower}, {selected:false}); }catch(e){} }
+    selTower = (pid==null ? null : +pid);
+    if(selTower != null){ try{ map.setFeatureState({source:'towers', id:selTower}, {selected:true}); }catch(e){} }
+  }
+
+  function buildTowers(){
+    if(towersReady) return;
+    fetch('corridorpoints.json').then(function(r){ return r.json(); }).then(function(pts){
+      var src = (pts && pts.features) ? pts.features : [];
+      var feats = [];
+      src.forEach(function(f){
+        var pid = f && f.properties ? f.properties.OBJECTID : null;
+        var meta = CORRIDORS[pid];
+        var coords = f && f.geometry ? f.geometry.coordinates : null;
+        if(!meta || !coords) return;
+        var ksi = (meta.fatal||0) + (meta.serious||0);
+        feats.push({
+          type:'Feature', id:+pid,
+          properties:{ pid:+pid, ksi:ksi, name:meta.name },
+          geometry:{ type:'Polygon', coordinates:[ hexRing(coords[0], coords[1], 78) ] }
+        });
+      });
+      if(map.getSource('towers')) return;
+      map.addSource('towers', { type:'geojson', data:{ type:'FeatureCollection', features:feats } });
+      map.addLayer({
+        id:'towers', type:'fill-extrusion', source:'towers',
+        layout:{ visibility: is3D ? 'visible' : 'none' },
+        paint:{
+          'fill-extrusion-color': ['case', ['boolean',['feature-state','selected'],false], '#ffffff', towerColorExpr()],
+          'fill-extrusion-height': ['interpolate',['linear'],['zoom'],
+            10, ['*',['get','ksi'],330],
+            13, ['*',['get','ksi'],150],
+            15.5, ['*',['get','ksi'],70]],
+          'fill-extrusion-base': 0,
+          'fill-extrusion-opacity': 0.86,
+          'fill-extrusion-vertical-gradient': true
+        }
+      });
+      towersReady = true;
+      if(selTower != null){ try{ map.setFeatureState({source:'towers', id:selTower}, {selected:true}); }catch(e){} }
+
+      map.on('click','towers', function(e){
+        var pid = e.features[0].properties.pid;
+        try { window.selectPoint(pid); } catch(err){}
+      });
+      map.on('mouseenter','towers', function(e){
+        map.getCanvas().style.cursor = 'pointer';
+        var p = e.features[0].properties;
+        if(tipEl){ tipEl.textContent = p.name + ' \u00B7 ' + p.ksi + ' KSI'; tipEl.classList.add('show'); }
+      });
+      map.on('mousemove','towers', function(e){
+        if(tipEl){ tipEl.style.left = e.point.x + 'px'; tipEl.style.top = e.point.y + 'px'; }
+      });
+      map.on('mouseleave','towers', function(){
+        map.getCanvas().style.cursor = '';
+        if(tipEl) tipEl.classList.remove('show');
+      });
+    }).catch(function(){ /* towers are optional */ });
+  }
+
+  function set3D(on){
+    is3D = !!on;
+    document.body.classList.toggle('is-3d', is3D);
+    if(btn3d) btn3d.classList.toggle('live', is3D);
+    var dur = RM ? 0 : 1100;
+    if(is3D){
+      try { map.setMaxPitch(70); } catch(e){}
+      try { map.dragRotate.enable(); } catch(e){}
+      try { map.touchZoomRotate.enableRotation(); } catch(e){}
+      if(map.getLayer('towers')) map.setLayoutProperty('towers','visibility','visible');
+      map.easeTo({ pitch:54, bearing:-18, duration:dur, easing:function(t){return t*(2-t);} });
+    } else {
+      if(map.getLayer('towers')) map.setLayoutProperty('towers','visibility','none');
+      map.easeTo({ pitch:0, bearing:0, duration: RM?0:900, easing:function(t){return t*(2-t);} });
+      map.once('moveend', function(){
+        if(!is3D){
+          try { map.setMaxPitch(0); } catch(e){}
+          try { map.dragRotate.disable(); } catch(e){}
+        }
+      });
+    }
+  }
+
+  /* =====================================================
+     ZOOM-TO-CORRIDOR OVERRIDE (preserve 3D camera)
+     ===================================================== */
+  var _origZoom = window.zoomToCorridor;
+  window.zoomToCorridor = function(lineId){
+    if(!is3D || !corridorsData){
+      return (typeof _origZoom === 'function') ? _origZoom.apply(this, arguments) : undefined;
+    }
+    var f = corridorsData.features.find(function(ft){ return ft.properties.OBJECTID === lineId; });
+    if(!f){
+      return (typeof _origZoom === 'function') ? _origZoom.apply(this, arguments) : undefined;
+    }
+    var b = new maplibregl.LngLatBounds();
+    var add = function(c){ if(Array.isArray(c[0])) c.forEach(add); else b.extend(c); };
+    add(f.geometry.coordinates);
+    var panelW = window.innerWidth > 640 ? 400 : 0;
+    var ranksEl = document.getElementById('ranks');
+    var ranksW = (ranksEl && ranksEl.classList.contains('open') && window.innerWidth > 980) ? 388 : 0;
+    var cam = null;
+    try {
+      cam = map.cameraForBounds(b, { padding:{top:90,bottom:90,left:80+ranksW,right:80+panelW}, bearing: map.getBearing() });
+    } catch(e){}
+    if(cam){
+      map.easeTo({
+        center: cam.center,
+        zoom: Math.min((cam.zoom || 14) - 0.35, 14.5),
+        bearing: map.getBearing(),
+        pitch: map.getPitch(),
+        duration: 850, easing:function(t){return t*(2-t);}
+      });
+    } else {
+      map.easeTo({ center:b.getCenter(), zoom:13.4, bearing:map.getBearing(), pitch:map.getPitch(), duration:850 });
+    }
+  };
+
+  /* =====================================================
+     SELECT-POINT WRAPPER (panel state + tower highlight)
+     ===================================================== */
+  var _origSelect = window.selectPoint;
+  window.selectPoint = function(pid){
+    document.body.classList.add('panel-open');
+    setTowerSel(+pid);
+    return (typeof _origSelect === 'function') ? _origSelect.apply(this, arguments) : undefined;
+  };
+
+  function clearSelectionUI(){
+    document.body.classList.remove('panel-open');
+    setTowerSel(null);
+  }
+  var pc = document.getElementById('panel-close');
+  if(pc) pc.addEventListener('click', clearSelectionUI);
+  document.addEventListener('keydown', function(e){ if(e.key === 'Escape') clearSelectionUI(); });
+
+  /* =====================================================
+     NIGHT / COMMAND-CENTER MODE (basemap swap + theme flip)
+     ===================================================== */
+  var LIGHT = 'https://basemaps.cartocdn.com/gl/positron-gl-style/style.json';
+  var DARK  = 'https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json';
+  var night = false, swapping = false;
+
+  var CUSTOM_SOURCES = ['corridors','points','nkde','towers'];
+  var UNDER_LABELS   = ['nkde'];
+  var OVER_ALL       = ['corridor-casing','point-halo','point-dot','point-sel','towers'];
+
+  function carryStyle(prev, next){
+    var sources = {};
+    var k;
+    for(k in next.sources){ if(next.sources.hasOwnProperty(k)) sources[k] = next.sources[k]; }
+    CUSTOM_SOURCES.forEach(function(id){ if(prev.sources && prev.sources[id]) sources[id] = prev.sources[id]; });
+
+    var prevById = {};
+    (prev.layers || []).forEach(function(l){ prevById[l.id] = l; });
+
+    var under = [];
+    UNDER_LABELS.forEach(function(id){ if(prevById[id]) under.push(prevById[id]); });
+    var over = [];
+    OVER_ALL.forEach(function(id){ if(prevById[id]) over.push(prevById[id]); });
+
+    var layers = [], inserted = false;
+    (next.layers || []).forEach(function(l){
+      if(!inserted && l.type === 'symbol'){ under.forEach(function(u){ layers.push(u); }); inserted = true; }
+      layers.push(l);
+    });
+    if(!inserted){ under.forEach(function(u){ layers.push(u); }); }
+    over.forEach(function(o){ layers.push(o); });
+
+    var out = {};
+    for(k in next){ if(next.hasOwnProperty(k)) out[k] = next[k]; }
+    out.sources = sources;
+    out.layers = layers;
+    return out;
+  }
+
+  function setNight(on){
+    on = !!on;
+    if(swapping || on === night) return;
+    swapping = true; night = on;
+    document.body.classList.toggle('night', night);
+    if(btnNight) btnNight.classList.toggle('live', night);
+
+    var done = false;
+    function finish(){
+      if(done) return; done = true; swapping = false;
+      if(selTower != null){ try{ map.setFeatureState({source:'towers', id:selTower}, {selected:true}); }catch(e){} }
+    }
+    try {
+      map.setStyle(night ? DARK : LIGHT, { transformStyle: carryStyle });
+    } catch(e){
+      swapping = false;
+      return;
+    }
+    map.once('idle', finish);
+    setTimeout(finish, 2600);
+  }
+
+  /* =====================================================
+     ANALYTICS DASHBOARD
+     ===================================================== */
+  function buildKPIs(){
+    var el = document.getElementById('dash-kpis'); if(!el) return;
+    el.innerHTML =
+      '<div class="kpi hot"><div class="k-n" data-v="'+T.ksi+'">0</div><div class="k-l">Total KSI</div></div>' +
+      '<div class="kpi"><div class="k-n" data-v="'+T.fatal+'">0</div><div class="k-l">Fatalities</div></div>' +
+      '<div class="kpi"><div class="k-n" data-v="'+T.serious+'">0</div><div class="k-l">Serious injuries</div></div>' +
+      '<div class="kpi"><div class="k-n" data-v="'+T.miles.toFixed(1)+'" data-dec="1">0</div><div class="k-l">Street-miles</div></div>';
+  }
+
+  function buildLede(){
+    var el = document.getElementById('dash-lede'); if(!el) return;
+    var byKsi = ALL.slice().sort(function(a,b){ return b.ksi - a.ksi; });
+    var top5 = byKsi.slice(0,5);
+    var top5ksi = top5.reduce(function(a,c){return a+c.ksi;},0);
+    var top5mi  = top5.reduce(function(a,c){return a+c.miles;},0);
+    var pct = Math.round(top5ksi / T.ksi * 100);
+    el.innerHTML = 'The five worst corridors \u2014 just <strong>' + top5mi.toFixed(1) +
+      ' of ' + T.miles.toFixed(1) + ' miles</strong> \u2014 carry <strong>' + pct +
+      '%</strong> of every killed-or-seriously-injured crash on this network.';
+  }
+
+  function buildScatter(){
+    var wrap = document.getElementById('scatter-wrap'); if(!wrap) return;
+    var maxF = Math.max.apply(null, ALL.map(function(d){return d.fatal;}));
+    var maxS = Math.max.apply(null, ALL.map(function(d){return d.serious;}));
+    var top  = Math.ceil(Math.max(maxF, maxS)/4)*4;
+    var W=680,H=470,ml=54,mr=18,mt=18,mb=54, pw=W-ml-mr, ph=H-mt-mb;
+    function sx(f){ return ml + (f/top)*pw; }
+    function sy(s){ return (mt+ph) - (s/top)*ph; }
+    var ticks=[]; for(var t=0;t<=top;t+=4) ticks.push(t);
+
+    var s = '<svg class="scatter" viewBox="0 0 '+W+' '+H+'" preserveAspectRatio="xMidYMid meet" role="img" aria-label="Fatalities versus serious injuries by corridor">';
+    s += '<g class="grid">';
+    ticks.forEach(function(tk){
+      var x=sx(tk), y=sy(tk);
+      s += '<line x1="'+ml+'" y1="'+y.toFixed(1)+'" x2="'+(ml+pw)+'" y2="'+y.toFixed(1)+'"/>';
+      s += '<line x1="'+x.toFixed(1)+'" y1="'+mt+'" x2="'+x.toFixed(1)+'" y2="'+(mt+ph)+'"/>';
+    });
+    s += '</g><g class="ax">';
+    ticks.forEach(function(tk){
+      var x=sx(tk), y=sy(tk);
+      s += '<text x="'+(ml-9)+'" y="'+(y+3.5).toFixed(1)+'" text-anchor="end">'+tk+'</text>';
+      s += '<text x="'+x.toFixed(1)+'" y="'+(mt+ph+18)+'" text-anchor="middle">'+tk+'</text>';
+    });
+    s += '</g>';
+    s += '<text class="axt" x="'+(ml+pw/2).toFixed(1)+'" y="'+(H-12)+'" text-anchor="middle">Fatalities (2019\u20132023)</text>';
+    s += '<text class="axt" x="'+(-(mt+ph/2)).toFixed(1)+'" y="15" transform="rotate(-90)" text-anchor="middle">Serious injuries</text>';
+
+    var byBig = ALL.slice().sort(function(a,b){ return b.ksi - a.ksi; });
+    byBig.forEach(function(d){
+      var x=sx(d.fatal), y=sy(d.serious);
+      var r=5 + 14*Math.sqrt(d.ksi/KSImax);
+      var tt = PMmax>PMmin ? (d.perMile-PMmin)/(PMmax-PMmin) : 0.5;
+      s += '<circle class="bub" data-pid="'+d.pid+'" cx="'+x.toFixed(1)+'" cy="'+y.toFixed(1)+'" r="'+r.toFixed(1)+'" fill="'+ramp(tt)+'" fill-opacity="0.82"/>';
+    });
+    s += '<g class="blab">';
+    byBig.slice(0,4).forEach(function(d){
+      var x=sx(d.fatal), y=sy(d.serious);
+      var r=5 + 14*Math.sqrt(d.ksi/KSImax);
+      s += '<text x="'+x.toFixed(1)+'" y="'+(y-r-6).toFixed(1)+'" text-anchor="middle">'+shortName(d.name)+'</text>';
+    });
+    s += '</g></svg><div class="bub-tip" id="bub-tip"></div>';
+    wrap.innerHTML = s;
+
+    var scatter = wrap.querySelector('.scatter');
+    var tip = wrap.querySelector('#bub-tip');
+    Array.prototype.forEach.call(wrap.querySelectorAll('.bub'), function(b){
+      var pid = +b.dataset.pid;
+      b.addEventListener('mouseenter', function(){
+        scatter.classList.add('dim'); b.classList.add('hot');
+        if(b.parentNode) b.parentNode.appendChild(b);
+        var m = byPid(pid); if(!m) return;
+        var rb = b.getBoundingClientRect(), rw = wrap.getBoundingClientRect();
+        tip.style.left = (rb.left - rw.left + rb.width/2) + 'px';
+        tip.style.top  = (rb.top - rw.top) + 'px';
+        tip.innerHTML = '<b>'+m.name+'</b><br><span class="muted">'+m.ksi+' KSI \u00B7 '+m.fatal+' fatal \u00B7 '+m.serious+' serious \u00B7 '+m.perMile.toFixed(1)+'/mi</span>';
+        tip.classList.add('show');
+      });
+      b.addEventListener('mouseleave', function(){
+        scatter.classList.remove('dim'); b.classList.remove('hot'); tip.classList.remove('show');
+      });
+      b.addEventListener('click', function(){
+        closeDash();
+        setTimeout(function(){ try{ window.selectPoint(pid); }catch(e){} }, 180);
+      });
+    });
+  }
+
+  function buildLead(){
+    var el = document.getElementById('dash-lead'); if(!el) return;
+    var rows = ALL.slice().sort(function(a,b){ return b.perMile - a.perMile; }).slice(0,6);
+    var max = rows[0].perMile || 1;
+    el.innerHTML = rows.map(function(d,i){
+      var t = d.perMile/max;
+      var tt = PMmax>PMmin ? (d.perMile-PMmin)/(PMmax-PMmin) : 0.5;
+      return '<div class="lead-row" data-pid="'+d.pid+'">' +
+        '<span class="lead-rank">'+(i+1)+'</span>' +
+        '<span style="min-width:0">' +
+          '<span class="lead-name">'+shortName(d.name)+'</span>' +
+          '<span class="lead-sub">'+d.ksi+' KSI \u00B7 '+d.miles.toFixed(2)+' mi</span>' +
+          '<span class="lead-bar-t"><span class="lead-bar" data-w="'+(t*100).toFixed(1)+'" style="background:'+ramp(tt)+'"></span></span>' +
+        '</span>' +
+        '<span style="text-align:right"><span class="lead-v">'+d.perMile.toFixed(1)+'</span><span class="lead-vu">KSI / mi</span></span>' +
+      '</div>';
+    }).join('');
+    Array.prototype.forEach.call(el.querySelectorAll('.lead-row'), function(r){
+      r.addEventListener('click', function(){
+        var pid = +r.dataset.pid;
+        closeDash();
+        setTimeout(function(){ try{ window.selectPoint(pid); }catch(e){} }, 180);
+      });
+    });
+  }
+
+  function buildFoot(){
+    var el = document.getElementById('dash-foot'); if(!el) return;
+    el.textContent = 'KSI = killed or seriously injured, 2019\u20132023. Per-mile rates normalize counts by corridor length; short corridors are more sensitive to individual crashes, so their rates read as indicative. Corridors meeting at a shared intersection may double-count crashes at that junction.';
+  }
+
+  function openDash(){
+    if(!dashWrap) return;
+    buildKPIs(); buildLede(); buildScatter(); buildLead();
+    dashWrap.classList.add('open');
+    requestAnimationFrame(function(){ requestAnimationFrame(function(){
+      Array.prototype.forEach.call(dashWrap.querySelectorAll('.k-n'), function(el){
+        animateNumber(el, parseFloat(el.dataset.v||'0'), parseInt(el.dataset.dec||'0',10), 1000, '');
+      });
+      Array.prototype.forEach.call(dashWrap.querySelectorAll('.lead-bar'), function(b){
+        b.style.width = (RM ? (b.dataset.w||0) : (b.dataset.w||0)) + '%';
+      });
+    }); });
+  }
+  function closeDash(){ if(dashWrap) dashWrap.classList.remove('open'); }
+  function toggleDash(){ if(dashWrap && dashWrap.classList.contains('open')) closeDash(); else openDash(); }
+
+  var dashClose = document.getElementById('dash-close');
+  if(dashClose) dashClose.addEventListener('click', closeDash);
+  if(dashWrap) dashWrap.addEventListener('click', function(e){ if(e.target === dashWrap) closeDash(); });
+  document.addEventListener('keydown', function(e){ if(e.key === 'Escape') closeDash(); });
+
+  /* =====================================================
+     TOOLBAR + 3D LEGEND NOTE + HOTKEYS
+     ===================================================== */
+  function wireToolbar(){
+    var a = document.getElementById('tb-analytics'); if(a) a.addEventListener('click', toggleDash);
+    if(btn3d) btn3d.addEventListener('click', function(){ set3D(!is3D); });
+    if(btnNight) btnNight.addEventListener('click', function(){ setNight(!night); });
+    var ab = document.getElementById('tb-about');
+    if(ab) ab.addEventListener('click', function(){ var w = document.getElementById('about-wrap'); if(w) w.classList.add('open'); });
+  }
+
+  function injectLegend3d(){
+    var c = document.querySelector('.controls'); if(!c) return;
+    if(document.getElementById('legend-3d')) return;
+    var div = document.createElement('div');
+    div.className = 'legend-3d'; div.id = 'legend-3d';
+    div.innerHTML = '<b>Towers</b> rise with each corridor\u2019s total KSI \u2014 taller and redder means more people killed or seriously injured.';
+    c.appendChild(div);
+  }
+
+  function toggleRanks(){
+    var r = document.getElementById('ranks'); if(!r) return;
+    if(r.classList.contains('open')){ var c = document.getElementById('rk-close'); if(c) c.click(); }
+    else { var o = document.getElementById('ranks-btn'); if(o) o.click(); }
+  }
+
+  document.addEventListener('keydown', function(e){
+    if(e.metaKey || e.ctrlKey || e.altKey) return;
+    var t = e.target;
+    if(t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
+    var k = (e.key || '').toLowerCase();
+    if(k === 'a'){ e.preventDefault(); toggleDash(); }
+    else if(k === 'n'){ e.preventDefault(); setNight(!night); }
+    else if(k === 'd'){ e.preventDefault(); set3D(!is3D); }
+    else if(k === 'r'){ e.preventDefault(); toggleRanks(); }
+    else if(k === 'b'){ e.preventDefault(); var w = document.getElementById('about-wrap'); if(w) w.classList.add('open'); }
+  });
+
+  /* =====================================================
+     INIT
+     ===================================================== */
+  function init(){
+    wireToolbar();
+    injectLegend3d();
+    buildFoot();
+    setTimeout(introCounts, 250);
+  }
+
+  var ready = false;
+  function onMapReady(){
+    if(ready) return; ready = true;
+    buildTowers();
+    if(!RM){ breatheRAF = requestAnimationFrame(breathe); }
+  }
+
+  init();
+  if(typeof map !== 'undefined' && map){
+    map.on('load', onMapReady);
+    var already = false;
+    try { already = map.loaded(); } catch(e){}
+    if(already) onMapReady();
+  }
+
+})();
+
+</script>
+</body>
+</html>
