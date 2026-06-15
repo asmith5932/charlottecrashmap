@@ -1,0 +1,521 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
+<title>Charlotte High-Injury Network — Crash Density</title>
+<link href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css" rel="stylesheet" />
+<script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
+<style>
+  :root{
+    --ink:#1a1a1a;
+    --ink-soft:#5b5b58;
+    --line:#e3e1da;
+    --paper:#fbfaf7;
+    --brand:#0E75BA;          /* Sustain Charlotte blue (logo) */
+    --brand-green:#4FA838;    /* logo green, darkened for text legibility */
+    --brand-soft:#0E75BA14;
+    --hot:#E60000;            /* data ramp hot end */
+    --sans:"Helvetica Neue",Helvetica,Arial,sans-serif;
+    --mono:"SFMono-Regular",ui-monospace,"Roboto Mono",Menlo,monospace;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%;font-family:var(--sans);color:var(--ink);background:var(--paper)}
+  #map{position:absolute;inset:0}
+
+  /* ---- Title plate ---- */
+  .plate{
+    position:absolute;top:18px;left:18px;z-index:5;max-width:330px;
+    background:rgba(251,250,247,.92);backdrop-filter:blur(6px);
+    border:1px solid var(--line);border-radius:4px;padding:16px 18px;
+  }
+  .plate .eyebrow{
+    font:500 11px/1.3 var(--mono);letter-spacing:.14em;text-transform:uppercase;
+    color:var(--hot);margin:0 0 6px;
+  }
+  .plate-brand{display:flex;align-items:center;gap:8px;margin:0 0 14px;text-decoration:none;
+    padding-bottom:12px;border-bottom:1px solid var(--line)}
+  .plate-brand img{height:34px;width:auto;display:block;background:#000;border-radius:4px;padding:5px 8px}
+  .brand-fallback{display:none;font:600 15px/1 var(--sans);color:var(--brand);letter-spacing:-.01em}
+  .plate h1{font:600 19px/1.25 var(--sans);margin:0 0 8px;letter-spacing:-.01em}
+  .plate p{font:400 13px/1.5 var(--sans);color:var(--ink-soft);margin:0}
+
+  /* ---- Controls ---- */
+  .controls{
+    position:absolute;left:18px;bottom:22px;z-index:5;
+    background:rgba(251,250,247,.92);backdrop-filter:blur(6px);
+    border:1px solid var(--line);border-radius:4px;padding:12px 14px;min-width:210px;
+  }
+  .ctl-row{display:flex;align-items:center;gap:9px;cursor:pointer;user-select:none}
+  .ctl-row input{accent-color:var(--hot);width:15px;height:15px;cursor:pointer}
+  .ctl-row span{font:500 13px/1 var(--sans)}
+  .legend{margin-top:12px;padding-top:11px;border-top:1px solid var(--line)}
+  .legend .lab{font:500 10px/1.3 var(--mono);letter-spacing:.1em;text-transform:uppercase;color:var(--ink-soft);margin-bottom:6px}
+  .ramp{height:9px;border-radius:2px;background:linear-gradient(90deg,#fde9c8,#f2b347,#e0642f,#b5161b)}
+  .ramp-ends{display:flex;justify-content:space-between;font:400 10px/1.4 var(--mono);color:var(--ink-soft);margin-top:3px}
+
+  /* ---- Loading pill ---- */
+  .loading{
+    position:absolute;top:18px;right:18px;z-index:6;display:flex;align-items:center;gap:8px;
+    background:rgba(251,250,247,.95);border:1px solid var(--line);border-radius:20px;
+    padding:7px 14px;font:500 12px/1 var(--sans);color:var(--ink-soft);transition:opacity .4s}
+  .loading.done{opacity:0;pointer-events:none}
+  .spin{width:11px;height:11px;border:2px solid var(--line);border-top-color:var(--hot);border-radius:50%;animation:sp .8s linear infinite}
+  @keyframes sp{to{transform:rotate(360deg)}}
+
+  /* ---- Side panel ---- */
+  .panel{
+    position:absolute;top:0;right:0;height:100%;width:380px;max-width:88vw;z-index:7;
+    background:var(--paper);border-left:1px solid var(--line);
+    transform:translateX(100%);transition:transform .34s cubic-bezier(.4,0,.2,1);
+    display:flex;flex-direction:column;box-shadow:-8px 0 30px rgba(0,0,0,.06)}
+  .panel.open{transform:translateX(0)}
+  .panel-head{padding:26px 26px 18px;border-bottom:1px solid var(--line);position:relative}
+  .panel-close{position:absolute;top:18px;right:20px;width:28px;height:28px;border:none;background:none;
+    font-size:22px;line-height:1;color:var(--ink-soft);cursor:pointer;border-radius:3px}
+  .panel-close:hover{background:#0000000a;color:var(--ink)}
+  .panel .tag{font:500 10px/1.3 var(--mono);letter-spacing:.13em;text-transform:uppercase;color:var(--hot);margin:0 0 8px}
+  .panel h2{font:600 21px/1.2 var(--sans);margin:0;letter-spacing:-.015em;padding-right:30px}
+  .panel .sub{font:400 13px/1.4 var(--sans);color:var(--ink-soft);margin:7px 0 0}
+  .panel-body{padding:22px 26px;overflow-y:auto;flex:1}
+  .panel-body .blurb{font:400 15px/1.62 var(--sans);color:var(--ink);margin:0;white-space:pre-wrap}
+  .panel-body .placeholder{color:var(--ink-soft);font-style:italic}
+  .credit{position:absolute;bottom:0;left:0;right:0;z-index:4;background:var(--brand);color:#fff;
+    font:500 11px/1.3 var(--sans);text-align:center;padding:7px 12px;letter-spacing:.01em}
+  .credit a{color:#fff;text-decoration:underline;text-underline-offset:2px}
+  .ksi-note{font:400 11px/1.5 var(--sans);color:var(--ink-soft);margin:22px 0 0;padding-top:14px;border-top:1px solid var(--line)}
+
+  /* ---- About button + sheet ---- */
+  .about-btn{position:absolute;top:18px;right:64px;z-index:6;background:rgba(251,250,247,.94);
+    border:1px solid var(--line);border-radius:4px;padding:8px 13px;font:500 12px/1 var(--sans);
+    color:var(--ink);cursor:pointer;backdrop-filter:blur(6px);transition:background .15s,border-color .15s}
+  .about-btn:hover{background:#fff;border-color:#c9c7c0}
+  .about-wrap{position:absolute;inset:0;z-index:15;display:flex;align-items:center;justify-content:center;
+    background:rgba(26,26,26,.32);opacity:0;pointer-events:none;transition:opacity .25s}
+  .about-wrap.open{opacity:1;pointer-events:auto}
+  .about{background:var(--paper);border:1px solid var(--line);border-radius:8px;max-width:560px;width:90%;
+    max-height:82vh;overflow-y:auto;padding:30px 34px;box-shadow:0 20px 60px rgba(0,0,0,.18);
+    transform:translateY(12px);transition:transform .25s}
+  .about-wrap.open .about{transform:translateY(0)}
+  .about h2{font:600 20px/1.2 var(--sans);margin:0 0 4px;letter-spacing:-.01em}
+  .about .ab-tag{font:500 10px/1.3 var(--mono);letter-spacing:.13em;text-transform:uppercase;color:var(--hot);margin:0 0 14px}
+  .about h3{font:600 13px/1.3 var(--sans);margin:20px 0 6px;color:var(--ink)}
+  .about p{font:400 13px/1.6 var(--sans);color:var(--ink-soft);margin:0 0 8px}
+  .about a{color:var(--hot)}
+  .about-close{position:absolute;top:16px;right:18px;width:28px;height:28px;border:none;background:none;
+    font-size:22px;line-height:1;color:var(--ink-soft);cursor:pointer;border-radius:3px}
+  .about-close:hover{background:#0000000a;color:var(--ink)}
+  .stat-strip{display:flex;gap:18px;margin:0 0 20px;padding-bottom:18px;border-bottom:1px solid var(--line)}
+  .stat{flex:1}
+  .stat .n{font:600 22px/1 var(--sans);letter-spacing:-.02em}
+  .stat .l{font:500 10px/1.3 var(--mono);letter-spacing:.08em;text-transform:uppercase;color:var(--ink-soft);margin-top:5px}
+  .ksi-hero{background:var(--hot);color:#fff;border-radius:6px;padding:18px 20px;margin:0 0 14px}
+  .ksi-hero .n{font:600 40px/1 var(--sans);letter-spacing:-.03em}
+  .ksi-hero .l{font:500 11px/1.4 var(--sans);opacity:.92;margin-top:7px}
+  .ksi-hero .l span{opacity:.78}
+
+  .hint{position:absolute;bottom:22px;left:50%;transform:translateX(-50%);z-index:4;
+    background:rgba(26,26,26,.86);color:#fff;font:500 12px/1 var(--sans);padding:9px 16px;border-radius:20px;
+    transition:opacity .4s}
+  .hint.hide{opacity:0;pointer-events:none}
+
+  /* ---- Hover tooltip ---- */
+  .tip{position:absolute;z-index:8;pointer-events:none;background:rgba(26,26,26,.92);color:#fff;
+    font:500 12px/1.2 var(--sans);padding:6px 10px;border-radius:5px;white-space:nowrap;
+    transform:translate(-50%,-150%);opacity:0;transition:opacity .12s}
+  .tip.show{opacity:1}
+  .tip::after{content:"";position:absolute;left:50%;top:100%;transform:translateX(-50%);
+    border:5px solid transparent;border-top-color:rgba(26,26,26,.92)}
+
+  /* ---- Tour + view controls ---- */
+  .actions{position:absolute;top:18px;right:64px;z-index:6;display:flex;gap:8px}
+  .btn{background:rgba(251,250,247,.94);border:1px solid var(--line);border-radius:4px;
+    padding:8px 13px;font:500 12px/1 var(--sans);color:var(--ink);cursor:pointer;
+    display:flex;align-items:center;gap:7px;backdrop-filter:blur(6px);transition:background .15s,border-color .15s}
+  .btn:hover{background:#fff;border-color:#c9c7c0}
+  .btn .ic{font-size:13px}
+  .btn.live{border-color:var(--hot);color:var(--hot)}
+
+  /* ---- Intro overlay ---- */
+  .intro{position:absolute;inset:0;z-index:20;background:rgba(251,250,247,0);
+    display:flex;align-items:center;justify-content:center;pointer-events:none;transition:opacity .55s}
+  .intro-card{background:var(--paper);border:1px solid var(--line);border-radius:8px;
+    padding:34px 38px;max-width:440px;text-align:center;box-shadow:0 20px 60px rgba(0,0,0,.12);
+    transform:translateY(0);opacity:1;transition:opacity .55s,transform .55s;pointer-events:auto}
+  .intro.gone{opacity:0;pointer-events:none}
+  .intro.gone .intro-card{opacity:0;transform:translateY(18px);pointer-events:none}
+  .intro-card .eyebrow{font:500 11px/1.3 var(--mono);letter-spacing:.16em;text-transform:uppercase;color:var(--hot);margin:0 0 12px}
+  .intro-card h1{font:600 27px/1.18 var(--sans);letter-spacing:-.02em;margin:0 0 12px}
+  .intro-card p{font:400 15px/1.6 var(--sans);color:var(--ink-soft);margin:0 0 14px}
+  .intro-bignum{display:flex;justify-content:center;gap:28px;margin:20px 0 22px}
+  .intro-bignum .bn{text-align:center}
+  .intro-bignum .bn .n{font:600 32px/1 var(--sans);letter-spacing:-.02em;color:var(--hot)}
+  .intro-bignum .bn .l{font:500 10px/1.3 var(--mono);letter-spacing:.08em;text-transform:uppercase;color:var(--ink-soft);margin-top:6px}
+  .intro-card button{background:var(--ink);color:#fff;border:none;border-radius:5px;
+    padding:12px 26px;font:500 14px/1 var(--sans);cursor:pointer;transition:background .15s}
+  .intro-card button:hover{background:#000}
+
+  /* ---- Rank badge in panel ---- */
+  .rank-badge{display:inline-flex;align-items:center;gap:6px;background:var(--hot);color:#fff;
+    font:500 11px/1 var(--mono);letter-spacing:.05em;padding:5px 9px;border-radius:4px;margin-bottom:10px}
+
+  /* ---- Tour progress ---- */
+
+  @media(max-width:640px){
+    .plate{max-width:none;left:12px;right:12px;top:12px}
+    .controls{left:12px;bottom:14px}
+    .panel{width:100%;max-width:100%}
+    .hint{display:none}
+    .actions{right:12px;top:auto;bottom:90px}
+  }
+</style>
+</head>
+<body>
+<div id="map"></div>
+
+<div class="intro" id="intro">
+  <div class="intro-card">
+    <p class="eyebrow">Charlotte · 2019–2023</p>
+    <h1>Some streets carry nearly all the harm</h1>
+    <div class="intro-bignum">
+      <div class="bn"><div class="n" id="iv-share">13%</div><div class="l">of streets</div></div>
+      <div class="bn"><div class="n">80%</div><div class="l">of severe crashes</div></div>
+      <div class="bn"><div class="n">29%</div><div class="l">are people walking/biking</div></div>
+    </div>
+    <p>A network-wide view of fatal and serious-injury crashes, 2019–2023.</p>
+    <button id="intro-go">Explore the map</button>
+  </div>
+</div>
+
+
+<div class="tip" id="tip"></div>
+
+<button class="about-btn" id="about-btn">About &amp; methodology</button>
+<div class="about-wrap" id="about-wrap">
+  <div class="about" role="dialog" aria-modal="true" aria-label="About and methodology">
+    <button class="about-close" id="about-close" aria-label="Close">×</button>
+    <p class="ab-tag">About this map</p>
+    <h2>Charlotte severe-crash density</h2>
+    <p>A network-based view of where killed-or-seriously-injured (KSI) crashes concentrate across Charlotte's streets, with detail on fourteen of the highest-injury corridors.</p>
+
+    <h3>What the colors show</h3>
+    <p>The warm ramp is a network kernel density estimate (NKDE) of KSI crashes — a measure of how tightly severe crashes cluster along the street network. Gray streets carry little or no severe-crash density; yellow, orange, and red mark rising concentration. Density classes match the published analysis.</p>
+
+    <h3>Corridor statistics</h3>
+    <p>For each highlighted corridor, the panel shows fatalities, serious injuries, total KSI, and KSI per mile (counts normalized by corridor length). Per-mile rates let short and long corridors be compared on equal footing; because some corridors are short, their per-mile rates are more sensitive to individual crashes and should be read as indicative rather than precise. Corridors that share an intersection may double-count crashes occurring at that junction.</p>
+
+    <h3>Data source</h3>
+    <p>Crash records: killed-or-seriously-injured crashes, 2019–2023, from the City of Charlotte open data portal. <em>[Add exact dataset name, URL, and the portal's data-license/attribution terms here.]</em> Corridor lengths derive from city street-centerline geometry.</p>
+
+    <h3>Limitations</h3>
+    <p>This is an analytical visualization, not a navigational tool, and is not intended to guide individual travel or routing decisions. Crash data reflects reported incidents and may contain omissions or classification errors present in the source records. Density and per-mile figures are estimates.</p>
+
+    <h3>Authorship</h3>
+    <p>Preliminary analysis prepared by a Sustain Charlotte intern for educational and advocacy purposes. Findings and interpretations are the author's and do not represent an official position of Sustain Charlotte, the City of Charlotte, or any other agency.</p>
+  </div>
+</div>
+
+<div class="plate">
+  <p class="eyebrow">Charlotte · 2019–2023 KSI</p>
+  <h1>Where serious crashes concentrate</h1>
+  <p>Network density of fatal and serious-injury crashes, 2019–2023.</p>
+</div>
+
+<div class="loading" id="loading"><span class="spin"></span><span id="loadtxt">Loading crash density…</span></div>
+
+<div class="controls">
+  <label class="ctl-row"><input type="checkbox" id="toggle-heat" checked><span>Crash density</span></label>
+  <div class="legend">
+    <div class="lab">Severe-crash density</div>
+    <div class="ramp" style="background:linear-gradient(90deg,#E1E1E1 0%,#E1E1E1 25%,#FFD37F 25%,#FFD37F 50%,#E69800 50%,#E69800 75%,#E60000 75%,#E60000 100%)"></div>
+    <div class="ramp-ends"><span>None</span><span>Highest</span></div>
+  </div>
+</div>
+
+<div class="hint" id="hint">Tap a marker to explore a corridor</div>
+
+<aside class="panel" id="panel" aria-hidden="true">
+  <div class="panel-head">
+    <button class="panel-close" id="panel-close" aria-label="Close panel">×</button>
+    <div id="p-rank"></div>
+    <p class="tag" id="p-tag">High-injury corridor</p>
+    <h2 id="p-name">—</h2>
+    <p class="sub" id="p-sub"></p>
+  </div>
+  <div class="panel-body">
+    <div id="p-stats" style="display:none">
+      <div class="ksi-hero">
+        <div class="n" id="p-permile">—</div>
+        <div class="l">severe crashes per mile <span id="p-len"></span></div>
+      </div>
+      <div class="stat-strip">
+        <div class="stat"><div class="n" id="p-fatal">—</div><div class="l">Fatal</div></div>
+        <div class="stat"><div class="n" id="p-serious">—</div><div class="l">Serious</div></div>
+        <div class="stat"><div class="n" id="p-ksi">—</div><div class="l">Total KSI</div></div>
+      </div>
+    </div>
+    <p class="blurb" id="p-blurb"></p>
+    <p class="ksi-note" id="p-ksinote">Killed-or-seriously-injured (KSI) crashes, 2019–2023, normalized by corridor length. Corridors that share an intersection may double-count crashes at that junction.</p>
+  </div>
+</aside>
+
+<script>
+/* ============================================================
+   CORRIDOR METADATA
+   Keyed by POINT OBJECTID (1-14). lineId = matching corridor
+   line OBJECTID. Fill `blurb` (and optional fatal/serious) later.
+   ============================================================ */
+const CORRIDORS = {
+  1:  {lineId:12, name:"Nations Ford Road",                      extent:"Arrowood Road → I-77",                  area:"Colony Acres",                  miles:0.37, serious:8,  fatal:2,  blurb:""},
+  2:  {lineId:14, name:"West Boulevard",                         extent:"Ross Avenue → Fordham Road",            area:"Revolution Park",               miles:0.38, serious:3,  fatal:6,  blurb:""},
+  3:  {lineId:10, name:"Brookshire Boulevard",                   extent:"Idaho Drive → Hoskins Road",            area:"Thomasboro-Hoskins",            miles:0.33, serious:6,  fatal:3,  blurb:""},
+  4:  {lineId:9,  name:"Beatties Ford Road",                     extent:"Saint John Street → Griers Grove Road", area:"Lincoln Heights",               miles:0.63, serious:6,  fatal:5,  blurb:""},
+  5:  {lineId:13, name:"West Sugar Creek Road",                  extent:"Munsee Street → Graham Street",         area:"Sugar Creek / Mineral Springs", miles:0.64, serious:8,  fatal:4,  blurb:""},
+  6:  {lineId:11, name:"Old Statesville Road",                   extent:"Gibbon Road → Beatties Ford Road",      area:"Slater Road / Hamilton Circle", miles:0.63, serious:7,  fatal:8,  blurb:""},
+  7:  {lineId:15, name:"University City Boulevard",              extent:"Harris Houston Road → I-85",            area:"University City",               miles:1.64, serious:14, fatal:6,  blurb:""},
+  8:  {lineId:7,  name:"North Tryon Street",                     extent:"Craighead Road → WT Harris Boulevard",  area:"University City / Hidden Valley",miles:1.90, serious:13, fatal:14, blurb:""},
+  9:  {lineId:8,  name:"The Plaza",                              extent:"East 36th Street → Milton Road",        area:"Plaza-Shamrock / NoDa",         miles:1.06, serious:5,  fatal:8,  blurb:""},
+  10: {lineId:5,  name:"Eastway Drive",                          extent:"Central Avenue → North Tryon Street",   area:"Plaza-Shamrock",                miles:1.22, serious:9,  fatal:6,  blurb:""},
+  11: {lineId:1,  name:"Independence Boulevard",                 extent:"Conference Drive → Norland Road",       area:"Woodberry Forest",              miles:0.92, serious:4,  fatal:8,  blurb:""},
+  12: {lineId:3,  name:"Sharon Amity Road / WT Harris Boulevard",extent:"Albemarle Road → Grier Road",           area:"Eastland / Hickory Grove",      miles:1.93, serious:7,  fatal:14, blurb:""},
+  13: {lineId:4,  name:"WT Harris Boulevard",                    extent:"Albemarle Road → Sharon Amity Road",    area:"Hickory Grove",                 miles:1.07, serious:10, fatal:6,  blurb:""},
+  14: {lineId:2,  name:"Albemarle Road / Central Avenue",        extent:"WT Harris Boulevard → Norland Road",    area:"Eastland",                      miles:1.08, serious:12, fatal:8,  blurb:""}
+};
+
+const map = new maplibregl.Map({
+  container:'map',
+  style:'https://basemaps.cartocdn.com/gl/voyager-gl-style/style.json',
+  center:[-80.82,35.24],
+  zoom:10.4,
+  minZoom:9.6,
+  maxZoom:17,
+  pitch:0,
+  maxPitch:0,
+  pitchWithRotate:false,
+  dragRotate:false,
+  attributionControl:{compact:true}
+});
+map.addControl(new maplibregl.NavigationControl({showCompass:false}),'top-right');
+
+let selectedPointId = null;
+let corridorsData = null;
+let pulseRAF = null;
+
+map.on('load', ()=>{
+  /* ---- Hotspots first (instant) ---- */
+  Promise.all([
+    fetch('corridors.geojson').then(r=>r.json()),
+    fetch('corridorpoints.json').then(r=>r.json())
+  ]).then(([lines,points])=>{
+    corridorsData = lines;
+
+    map.addSource('corridors',{type:'geojson',data:lines});
+    // selection casing — a wide soft halo. Moved BENEATH the heatmap once it loads,
+    // so the crash-density colors ride on top and stay fully visible.
+    map.addLayer({
+      id:'corridor-casing', type:'line', source:'corridors',
+      layout:{'line-cap':'round','line-join':'round'},
+      paint:{'line-color':'#969691','line-width':7,'line-opacity':0,'line-blur':0.4},
+      filter:['==','OBJECTID',-1]
+    });
+
+    map.addSource('points',{type:'geojson',data:points});
+    map.addLayer({
+      id:'point-halo', type:'circle', source:'points',
+      paint:{
+        'circle-radius':['interpolate',['linear'],['zoom'],9,10,12,14,15,18],
+        'circle-color':'#E60000','circle-opacity':0.12
+      }
+    });
+    map.addLayer({
+      id:'point-dot', type:'circle', source:'points',
+      paint:{
+        'circle-radius':['interpolate',['linear'],['zoom'],9,5,12,6.5,15,8],
+        'circle-color':'#E60000',
+        'circle-stroke-width':2,'circle-stroke-color':'#fff'
+      }
+    });
+    // small marker for the selected point so it doesn't cover the corridor
+    map.addLayer({
+      id:'point-sel', type:'circle', source:'points',
+      paint:{
+        'circle-radius':3.5,
+        'circle-color':'#fff',
+        'circle-stroke-width':2,'circle-stroke-color':'#E60000'
+      },
+      filter:['==','OBJECTID',-1]
+    });
+
+    map.on('click','point-dot',e=>selectPoint(e.features[0].properties.OBJECTID));
+    map.on('mouseenter','point-dot',e=>{
+      map.getCanvas().style.cursor='pointer';
+      const pid=e.features[0].properties.OBJECTID;
+      const meta=CORRIDORS[pid]; if(!meta) return;
+      const tip=document.getElementById('tip');
+      tip.textContent=meta.name;
+      tip.classList.add('show');
+    });
+    map.on('mousemove','point-dot',e=>{
+      const tip=document.getElementById('tip');
+      tip.style.left=e.point.x+'px'; tip.style.top=e.point.y+'px';
+    });
+    map.on('mouseleave','point-dot',()=>{
+      map.getCanvas().style.cursor='';
+      document.getElementById('tip').classList.remove('show');
+    });
+  });
+
+  /* ---- Heatmap streams in behind ---- */
+  fetch('heatmap_web.geojson').then(r=>r.json()).then(geo=>{
+    map.addSource('nkde',{
+      type:'geojson',
+      data:geo,
+      tolerance:0.1,    // less aggressive simplification -> keeps thin lixels at low zoom
+      buffer:128,       // wider tile buffer so edge features don't drop
+      maxzoom:14
+    });
+    const nkdeLayer={
+      id:'nkde', type:'line', source:'nkde',
+      layout:{'line-cap':'round'},
+      paint:{
+        'line-width':['interpolate',['linear'],['zoom'],
+          9,  ['step',['get','density'], 0.8, 0.000372,1.6, 0.000736,1.6, 0.001430,2.2],
+          11, ['step',['get','density'], 0.5, 0.000372,1.2, 0.000736,1.2, 0.001430,1.8],
+          14, ['step',['get','density'], 0.7, 0.000372,2.2, 0.000736,2.2, 0.001430,3.4]
+        ],
+        'line-color':['step',['get','density'],
+          '#E1E1E1',          /* 0 - 0.000371  gray */
+          0.000372,'#FFD37F',  /* yellow */
+          0.000736,'#E69800',  /* orange */
+          0.001430,'#E60000'   /* red */
+        ],
+        'line-opacity':['step',['get','density'],
+          0.22,                /* gray streets sit well back */
+          0.000372,0.9
+        ]
+      }
+    };
+    // insert nkde beneath the basemap's first symbol (label) layer,
+    // so street names + road labels always draw on top of the density
+    let beforeId = map.getLayer('point-halo') ? 'point-halo' : undefined;
+    try{
+      const lyrs = map.getStyle().layers;
+      const firstSymbol = lyrs.find(l=>l.type==='symbol');
+      if(firstSymbol) beforeId = firstSymbol.id;
+    }catch(e){}
+    map.addLayer(nkdeLayer, beforeId);
+    doneLoading();
+  }).catch(()=>{ doneLoading('Density layer failed to load'); });
+});
+
+function doneLoading(msg){
+  const l=document.getElementById('loading');
+  if(msg){document.getElementById('loadtxt').textContent=msg;return;}
+  l.classList.add('done');
+}
+
+function selectPoint(pid){
+  const meta = CORRIDORS[pid];
+  if(!meta) return;
+  selectedPointId = pid;
+
+  // frame the corridor with a casing drawn BENEATH the heatmap (density rides on top, stays visible)
+  map.setFilter('corridor-casing',['==','OBJECTID',meta.lineId]);
+  map.setFilter('point-sel',['==','OBJECTID',pid]);
+  map.setFilter('point-dot',['!=','OBJECTID',pid]);
+  map.setFilter('point-halo',['!=','OBJECTID',pid]);
+
+  startPulse();
+  zoomToCorridor(meta.lineId);
+
+  // panel content
+  document.getElementById('p-rank').innerHTML = '';
+  document.getElementById('p-tag').textContent  = meta.area || 'High-injury corridor';
+  document.getElementById('p-name').textContent = meta.name;
+  document.getElementById('p-sub').textContent  = meta.extent || '';
+  const blurbEl = document.getElementById('p-blurb');
+  if(meta.blurb && meta.blurb.trim()){
+    blurbEl.textContent = meta.blurb; blurbEl.classList.remove('placeholder');
+  }else{
+    blurbEl.textContent = "Blurb for "+meta.name+" goes here. Edit the CORRIDORS table in the page source to add it.";
+    blurbEl.classList.add('placeholder');
+  }
+  const stats=document.getElementById('p-stats');
+  if(meta.fatal!=null||meta.serious!=null){
+    stats.style.display='block';
+    const f=meta.fatal??0, s=meta.serious??0, ksi=f+s;
+    const perMile = meta.miles ? (ksi/meta.miles) : null;
+    document.getElementById('p-permile').textContent = perMile!=null ? perMile.toFixed(1) : '—';
+    document.getElementById('p-len').textContent = meta.miles ? '('+meta.miles.toFixed(2)+' mi)' : '';
+    document.getElementById('p-fatal').textContent = f;
+    document.getElementById('p-serious').textContent = s;
+    document.getElementById('p-ksi').textContent = ksi;
+  }else stats.style.display='none';
+
+  document.getElementById('panel').classList.add('open');
+  document.getElementById('panel').setAttribute('aria-hidden','false');
+  document.getElementById('hint').classList.add('hide');
+}
+
+function zoomToCorridor(lineId){
+  if(!corridorsData) return;
+  const f = corridorsData.features.find(ft=>ft.properties.OBJECTID===lineId);
+  if(!f) return;
+  const b = new maplibregl.LngLatBounds();
+  const addCoords = c => Array.isArray(c[0]) ? c.forEach(addCoords) : b.extend(c);
+  addCoords(f.geometry.coordinates);
+  const panelW = window.innerWidth>640 ? 400 : 0;  // leave room for the side panel
+  map.fitBounds(b,{padding:{top:90,bottom:90,left:80,right:80+panelW},duration:800,maxZoom:14.5});
+}
+
+let pulseT0=null;
+function startPulse(){
+  cancelAnimationFrame(pulseRAF);
+  if(map.getLayer('corridor-casing')){
+    map.setPaintProperty('corridor-casing','line-opacity',0.9);
+    map.setPaintProperty('corridor-casing','line-width',7);
+  }
+}
+
+function closePanel(){
+  document.getElementById('panel').classList.remove('open');
+  document.getElementById('panel').setAttribute('aria-hidden','true');
+  cancelAnimationFrame(pulseRAF); pulseRAF=null;
+  map.setFilter('corridor-casing',['==','OBJECTID',-1]);
+  if(map.getLayer('corridor-casing')) map.setPaintProperty('corridor-casing','line-opacity',0);
+  map.setFilter('point-sel',['==','OBJECTID',-1]);
+  map.setFilter('point-dot',['!=','OBJECTID',-9999]);   // show all again
+  map.setFilter('point-halo',['!=','OBJECTID',-9999]);
+  selectedPointId=null;
+}
+document.getElementById('panel-close').addEventListener('click',closePanel);
+document.addEventListener('keydown',e=>{if(e.key==='Escape')closePanel();});
+
+document.getElementById('toggle-heat').addEventListener('change',e=>{
+  const v=e.target.checked?'visible':'none';
+  if(map.getLayer('nkde')) map.setLayoutProperty('nkde','visibility',v);
+});
+
+/* ===================== INTRO OVERLAY + OPENING MOVE ===================== */
+let introDismissed=false;
+function dismissIntro(){
+  if(introDismissed) return; introDismissed=true;
+  const intro=document.getElementById('intro');
+  intro.classList.add('gone');
+  setTimeout(()=>{ intro.style.display='none'; },600);
+  // cinematic opening: gentle rotate + zoom into the city
+  map.easeTo({center:[-80.82,35.24],zoom:11,bearing:0,pitch:0,duration:2600,easing:t=>t*(2-t)});
+  setTimeout(()=>document.getElementById('hint').classList.remove('hide'),2600);
+}
+document.getElementById('intro-go').addEventListener('click',dismissIntro);
+
+/* ===================== ABOUT / METHODOLOGY SHEET ===================== */
+const aboutWrap=document.getElementById('about-wrap');
+document.getElementById('about-btn').addEventListener('click',()=>aboutWrap.classList.add('open'));
+document.getElementById('about-close').addEventListener('click',()=>aboutWrap.classList.remove('open'));
+aboutWrap.addEventListener('click',e=>{ if(e.target===aboutWrap) aboutWrap.classList.remove('open'); });
+document.addEventListener('keydown',e=>{ if(e.key==='Escape') aboutWrap.classList.remove('open'); });
+
+</script>
+</body>
+</html>
