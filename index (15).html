@@ -1,0 +1,967 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
+<title>Charlotte High-Injury Network — Crash Density</title>
+<link href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css" rel="stylesheet" />
+<script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
+<style>
+  :root{
+    --ink:#1a1a1a;
+    --ink-soft:#5b5b58;
+    --line:#e3e1da;
+    --paper:#fbfaf7;
+    --brand:#0E75BA;          /* Sustain Charlotte blue (logo) */
+    --brand-green:#4FA838;    /* logo green, darkened for text legibility */
+    --brand-soft:#0E75BA14;
+    --hot:#E60000;            /* data ramp hot end */
+    --sans:"Helvetica Neue",Helvetica,Arial,sans-serif;
+    --mono:"SFMono-Regular",ui-monospace,"Roboto Mono",Menlo,monospace;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%;font-family:var(--sans);color:var(--ink);background:var(--paper);overflow:hidden}
+  #map{position:absolute;inset:0}
+
+  /* ---- Title plate ---- */
+  .plate{
+    position:absolute;top:18px;left:18px;z-index:5;max-width:320px;
+    background:rgba(251,250,247,.92);backdrop-filter:blur(6px);
+    border:1px solid var(--line);border-radius:4px;padding:18px 20px;
+  }
+  .plate .eyebrow{
+    font:500 11px/1.3 var(--mono);letter-spacing:.14em;text-transform:uppercase;
+    color:var(--hot);margin:0 0 6px;
+  }
+  .plate-brand{display:flex;align-items:center;gap:8px;margin:0 0 14px;text-decoration:none;
+    padding-bottom:12px;border-bottom:1px solid var(--line)}
+  .plate-brand img{height:34px;width:auto;display:block;background:#000;border-radius:4px;padding:5px 8px}
+  .brand-fallback{display:none;font:600 15px/1 var(--sans);color:var(--brand);letter-spacing:-.01em}
+  .plate h1{font:600 20px/1.25 var(--sans);margin:0 0 7px;letter-spacing:-.015em}
+  .plate p{font:400 13px/1.5 var(--sans);color:var(--ink-soft);margin:0}
+
+  /* ---- Controls ---- */
+  .controls{
+    position:absolute;left:18px;bottom:22px;z-index:5;
+    background:rgba(251,250,247,.92);backdrop-filter:blur(6px);
+    border:1px solid var(--line);border-radius:4px;padding:12px 14px;min-width:210px;
+  }
+  .ctl-row{display:flex;align-items:center;gap:9px;cursor:pointer;user-select:none}
+  .ctl-row input{accent-color:var(--hot);width:15px;height:15px;cursor:pointer}
+  .ctl-row span{font:500 13px/1 var(--sans)}
+  .mode-select{margin-top:11px;padding-top:11px;border-top:1px solid var(--line);display:flex;flex-direction:column;gap:7px}
+  .mode-lab{font:500 10px/1.3 var(--mono);letter-spacing:.1em;text-transform:uppercase;color:var(--ink-soft);margin-bottom:1px}
+  .mode-row{display:flex;align-items:center;gap:8px;cursor:pointer;user-select:none}
+  .mode-row input{accent-color:var(--hot);width:14px;height:14px;cursor:pointer}
+  .mode-row span{font:400 12.5px/1 var(--sans);color:var(--ink)}
+  .legend{margin-top:12px;padding-top:11px;border-top:1px solid var(--line)}
+  .legend .lab{font:500 10px/1.3 var(--mono);letter-spacing:.1em;text-transform:uppercase;color:var(--ink-soft);margin-bottom:6px}
+  .ramp{height:9px;border-radius:2px;background:linear-gradient(90deg,#fde9c8,#f2b347,#e0642f,#b5161b)}
+  .ramp-ends{display:flex;justify-content:space-between;font:400 10px/1.4 var(--mono);color:var(--ink-soft);margin-top:3px}
+  .ramp-ticks{display:flex;justify-content:space-between;font:400 9.5px/1.3 var(--mono);color:var(--ink-soft);margin-top:3px}
+  .ramp-unit{font:400 9.5px/1.3 var(--sans);color:var(--ink-soft);margin-top:4px;opacity:.85}
+  #legend-mode{color:var(--hot);font-weight:600}
+
+  /* ---- Loading pill ---- */
+  .loading{
+    position:absolute;top:18px;right:18px;z-index:6;display:flex;align-items:center;gap:8px;
+    background:rgba(251,250,247,.95);border:1px solid var(--line);border-radius:20px;
+    padding:7px 14px;font:500 12px/1 var(--sans);color:var(--ink-soft);transition:opacity .4s}
+  .loading.done{opacity:0;pointer-events:none}
+  .spin{width:11px;height:11px;border:2px solid var(--line);border-top-color:var(--hot);border-radius:50%;animation:sp .8s linear infinite}
+  @keyframes sp{to{transform:rotate(360deg)}}
+
+  /* ---- Side panel ---- */
+  .panel{
+    position:absolute;top:0;right:0;height:100%;width:380px;max-width:88vw;z-index:7;
+    background:var(--paper);border-left:1px solid var(--line);
+    transform:translateX(100%);visibility:hidden;
+    transition:transform .34s cubic-bezier(.4,0,.2,1),visibility 0s linear .34s;
+    display:flex;flex-direction:column;box-shadow:-8px 0 30px rgba(0,0,0,.06)}
+  .panel.open{transform:translateX(0);visibility:visible;transition:transform .34s cubic-bezier(.4,0,.2,1)}
+  .panel-head{padding:26px 26px 18px;border-bottom:1px solid var(--line);position:relative}
+  .panel-close{position:absolute;top:18px;right:20px;width:28px;height:28px;border:none;background:none;
+    font-size:22px;line-height:1;color:var(--ink-soft);cursor:pointer;border-radius:3px}
+  .panel-close:hover{background:#0000000a;color:var(--ink)}
+  .panel .tag{font:500 10px/1.3 var(--mono);letter-spacing:.13em;text-transform:uppercase;color:var(--hot);margin:0 0 8px}
+  .panel h2{font:600 21px/1.2 var(--sans);margin:0;letter-spacing:-.015em;padding-right:30px}
+  .panel .sub{font:400 13px/1.4 var(--sans);color:var(--ink-soft);margin:7px 0 0}
+  .panel-body{padding:22px 26px;overflow-y:auto;flex:1}
+  .panel-body .blurb{font:400 15px/1.62 var(--sans);color:var(--ink);margin:0}
+  .panel-body .blurb a{color:var(--brand);text-decoration:underline;text-underline-offset:2px;text-decoration-thickness:1px}
+  .panel-body .blurb a:hover{color:var(--hot)}
+  .panel-body .placeholder{color:var(--ink-soft);font-style:italic}
+  .credit{position:absolute;bottom:0;left:0;right:0;z-index:4;background:var(--brand);color:#fff;
+    font:500 11px/1.3 var(--sans);text-align:center;padding:7px 12px;letter-spacing:.01em}
+  .credit a{color:#fff;text-decoration:underline;text-underline-offset:2px}
+  .ksi-note{font:400 11px/1.5 var(--sans);color:var(--ink-soft);margin:22px 0 0;padding-top:14px;border-top:1px solid var(--line)}
+
+  /* ---- About button + sheet ---- */
+  .topbar{position:absolute;top:18px;right:18px;z-index:6;display:flex;gap:10px;align-items:center;flex-wrap:wrap;justify-content:flex-end;max-width:calc(100% - 36px)}
+  .about-btn{background:rgba(251,250,247,.94);
+    border:1px solid var(--line);border-radius:5px;padding:10px 16px;font:600 13px/1 var(--sans);
+    color:var(--ink);cursor:pointer;backdrop-filter:blur(6px);transition:background .15s,border-color .15s;white-space:nowrap}
+  .about-btn:hover{background:#fff;border-color:#c9c7c0}
+  .guide-btn{background:var(--ink);
+    border:1px solid var(--ink);border-radius:5px;padding:11px 20px;font:700 14px/1 var(--sans);
+    color:#fff;cursor:pointer;box-shadow:0 2px 10px rgba(0,0,0,.18);transition:background .15s;white-space:nowrap}
+  .guide-btn:hover{background:#000}
+  .guide-wrap{position:absolute;inset:0;z-index:25;display:flex;align-items:center;justify-content:center;
+    background:rgba(26,26,26,.32);opacity:0;pointer-events:none;transition:opacity .25s}
+  .guide-wrap.open{opacity:1;pointer-events:auto}
+  .guide-wrap .about{transform:translateY(12px);transition:transform .25s}
+  .guide-wrap.open .about{transform:translateY(0)}
+  .about-wrap{position:absolute;inset:0;z-index:25;display:flex;align-items:center;justify-content:center;
+    background:rgba(26,26,26,.32);opacity:0;pointer-events:none;transition:opacity .25s}
+  .about-wrap.open{opacity:1;pointer-events:auto}
+  .about{background:var(--paper);border:1px solid var(--line);border-radius:8px;max-width:560px;width:90%;
+    max-height:82vh;overflow-y:auto;padding:30px 34px;box-shadow:0 20px 60px rgba(0,0,0,.18);
+    transform:translateY(12px);transition:transform .25s}
+  .about-wrap.open .about{transform:translateY(0)}
+  /* ---- Comprehensive corridor data button + table ---- */
+  .data-btn{background:rgba(251,250,247,.94);
+    border:1px solid var(--line);border-radius:5px;padding:10px 16px;font:600 13px/1 var(--sans);
+    color:var(--ink);cursor:pointer;backdrop-filter:blur(6px);transition:background .15s,border-color .15s;white-space:nowrap}
+  .data-btn:hover{background:#fff;border-color:#c9c7c0}
+  .data-wrap{position:absolute;inset:0;z-index:26;display:flex;align-items:center;justify-content:center;
+    background:rgba(26,26,26,.38);opacity:0;pointer-events:none;transition:opacity .25s}
+  .data-wrap.open{opacity:1;pointer-events:auto}
+  .data-modal{position:relative;background:var(--paper);border:1px solid var(--line);border-radius:8px;
+    max-width:760px;width:94%;max-height:86vh;overflow-y:auto;padding:28px 32px;
+    box-shadow:0 20px 60px rgba(0,0,0,.2);transform:translateY(12px);transition:transform .25s}
+  .data-wrap.open .data-modal{transform:translateY(0)}
+  .data-note{font:400 12.5px/1.55 var(--sans);color:var(--ink-soft);margin:0 0 8px}
+  .data-note-sep{padding-top:8px;border-top:1px solid var(--line);margin-bottom:14px}
+  .data-tablewrap{overflow-x:auto}
+  .data-table{width:100%;border-collapse:collapse;font:400 12.5px/1.3 var(--sans)}
+  .data-table th{position:sticky;top:0;background:var(--paper);text-align:left;padding:8px 10px;
+    font:600 11px/1.2 var(--mono);letter-spacing:.04em;text-transform:uppercase;color:var(--ink-soft);
+    border-bottom:2px solid var(--line);cursor:pointer;white-space:nowrap;user-select:none}
+  .data-table th.num{text-align:right}
+  .data-table th:hover{color:var(--ink)}
+  .data-table th.sorted-desc::after{content:" \25BC";font-size:8px}
+  .data-table th.sorted-asc::after{content:" \25B2";font-size:8px}
+  .data-table td{padding:7px 10px;border-bottom:1px solid var(--line);color:var(--ink)}
+  .data-table td.num{text-align:right;font-family:var(--mono);font-size:12px}
+  .data-table tbody tr{cursor:pointer;transition:background .12s}
+  .data-table tbody tr:hover{background:rgba(230,0,0,.06)}
+  .data-table td.cname{font-weight:500}
+  /* inline legend */
+  .data-legend{display:flex;align-items:center;gap:5px;margin:0 0 12px;font:400 11px/1 var(--sans);color:var(--ink-soft)}
+  .dl-label{font-family:var(--mono);font-size:10px;letter-spacing:.03em;text-transform:uppercase;margin-right:3px}
+  .dl-swatch{width:16px;height:12px;border-radius:2px;display:inline-block}
+  .dl-ends{margin-left:5px}
+  /* shaded cells (crash color scheme) */
+  .data-table td.c0{background:#E1E1E1}
+  .data-table td.c1{background:#FFD37F}
+  .data-table td.c2{background:#E69800;color:#fff}
+  .data-table td.c3{background:#E60000;color:#fff}
+  /* floating corridor readout card */
+  .corr-readout{position:absolute;right:18px;bottom:22px;z-index:9;background:var(--paper);
+    border:1px solid var(--line);border-radius:8px;padding:14px 16px 12px;box-shadow:0 8px 28px rgba(0,0,0,.18);
+    min-width:230px;max-width:280px;opacity:0;pointer-events:none;transform:translateY(8px);transition:opacity .2s,transform .2s}
+  .corr-readout.show{opacity:1;pointer-events:auto;transform:translateY(0)}
+  .corr-readout-x{position:absolute;top:8px;right:9px;border:none;background:none;font-size:17px;line-height:1;color:var(--ink-soft);cursor:pointer;padding:2px}
+  .corr-readout-x:hover{color:var(--ink)}
+  .cr-name{font:600 14px/1.25 var(--sans);color:var(--ink);margin:0 18px 2px 0}
+  .cr-sub{font:400 10px/1.3 var(--mono);letter-spacing:.03em;text-transform:uppercase;color:var(--ink-soft);margin:0 0 10px}
+  .cr-stats{display:grid;grid-template-columns:repeat(3,1fr);gap:9px 6px}
+  .cr-stat{display:flex;flex-direction:column;align-items:flex-start}
+  .cr-n{font:600 17px/1 var(--mono);color:var(--ink)}
+  .cr-l{font:400 9.5px/1.2 var(--mono);letter-spacing:.05em;text-transform:uppercase;color:var(--ink-soft);margin-top:2px}
+  .about h2{font:600 20px/1.2 var(--sans);margin:0 0 4px;letter-spacing:-.01em}
+  .about .ab-tag{font:500 10px/1.3 var(--mono);letter-spacing:.13em;text-transform:uppercase;color:var(--hot);margin:0 0 14px}
+  .about h3{font:600 13px/1.3 var(--sans);margin:20px 0 6px;color:var(--ink)}
+  .about p{font:400 13px/1.6 var(--sans);color:var(--ink-soft);margin:0 0 8px}
+  .mono-inline{font-family:var(--mono);font-size:.92em}
+  .param-tbl{width:100%;border-collapse:collapse;margin:4px 0 10px;table-layout:fixed}
+  .param-tbl td{padding:5px 4px;font-size:11.5px;line-height:1.4;border-bottom:1px solid var(--line);vertical-align:top;overflow-wrap:break-word}
+  .param-tbl td:nth-child(1){font-family:var(--mono);color:var(--ink-soft);width:44%}
+  .param-tbl td:nth-child(2){font-family:var(--mono);color:var(--ink);width:46%}
+  .param-tbl td.pi{width:10%;text-align:right;border-bottom:1px solid var(--line)}
+  .pinfo{border:none;background:none;color:var(--ink-soft);cursor:pointer;font-size:13px;line-height:1;padding:0 2px;opacity:.6;transition:opacity .15s,color .15s}
+  .pinfo:hover{opacity:1;color:var(--hot)}
+  .param-tbl tr.pdesc{display:none}
+  .param-tbl tr.pdesc.open{display:table-row}
+  .param-tbl tr.pdesc td{font-family:var(--sans);font-size:11.5px;line-height:1.5;color:var(--ink-soft);background:#00000005;padding:7px 10px;border-bottom:1px solid var(--line)}
+  .about a{color:var(--hot)}
+  .about-close{position:absolute;top:16px;right:18px;width:28px;height:28px;border:none;background:none;
+    font-size:22px;line-height:1;color:var(--ink-soft);cursor:pointer;border-radius:3px}
+  .about-close:hover{background:#0000000a;color:var(--ink)}
+  .stat-strip{display:flex;gap:18px;margin:0 0 20px;padding-bottom:18px;border-bottom:1px solid var(--line)}
+  .stat{flex:1}
+  .stat .n{font:600 22px/1 var(--sans);letter-spacing:-.02em}
+  .stat .l{font:500 10px/1.3 var(--mono);letter-spacing:.08em;text-transform:uppercase;color:var(--ink-soft);margin-top:5px}
+  .ksi-hero{background:var(--hot);color:#fff;border-radius:6px;padding:18px 20px;margin:0 0 14px}
+  .ksi-hero .n{font:600 40px/1 var(--sans);letter-spacing:-.03em}
+  .ksi-hero .l{font:500 11px/1.4 var(--sans);opacity:.92;margin-top:7px}
+  .ksi-hero .l span{opacity:.78}
+
+  .hint{position:absolute;bottom:22px;left:50%;transform:translateX(-50%);z-index:4;
+    background:rgba(26,26,26,.86);color:#fff;font:500 12px/1 var(--sans);padding:9px 16px;border-radius:20px;
+    transition:opacity .4s}
+  .hint.hide{opacity:0;pointer-events:none}
+
+  /* ---- Hover tooltip ---- */
+  .tip{position:absolute;z-index:8;pointer-events:none;background:rgba(26,26,26,.92);color:#fff;
+    font:500 12px/1.2 var(--sans);padding:6px 10px;border-radius:5px;white-space:nowrap;
+    transform:translate(-50%,-150%);opacity:0;transition:opacity .12s}
+  .tip.show{opacity:1}
+  .tip::after{content:"";position:absolute;left:50%;top:100%;transform:translateX(-50%);
+    border:5px solid transparent;border-top-color:rgba(26,26,26,.92)}
+
+  /* ---- Tour + view controls ---- */
+  .actions{position:absolute;top:18px;right:64px;z-index:6;display:flex;gap:8px}
+  .btn{background:rgba(251,250,247,.94);border:1px solid var(--line);border-radius:4px;
+    padding:8px 13px;font:500 12px/1 var(--sans);color:var(--ink);cursor:pointer;
+    display:flex;align-items:center;gap:7px;backdrop-filter:blur(6px);transition:background .15s,border-color .15s}
+  .btn:hover{background:#fff;border-color:#c9c7c0}
+  .btn .ic{font-size:13px}
+  .btn.live{border-color:var(--hot);color:var(--hot)}
+
+  /* ---- Intro overlay ---- */
+  .intro{position:absolute;inset:0;z-index:20;background:rgba(251,250,247,0);
+    display:flex;align-items:center;justify-content:center;pointer-events:none;transition:opacity .55s}
+  .intro-card{background:var(--paper);border:1px solid var(--line);border-radius:8px;
+    padding:38px 40px 34px;max-width:460px;text-align:center;box-shadow:0 20px 60px rgba(0,0,0,.12);
+    transform:translateY(0);opacity:1;transition:opacity .55s,transform .55s;pointer-events:auto}
+  .intro.gone{opacity:0;pointer-events:none}
+  .intro.gone .intro-card{opacity:0;transform:translateY(18px);pointer-events:none}
+  .intro-card .eyebrow{font:500 11px/1.3 var(--mono);letter-spacing:.16em;text-transform:uppercase;color:var(--hot);margin:0 0 14px}
+  .intro-card h1{font:600 28px/1.2 var(--sans);letter-spacing:-.02em;margin:0 0 26px}
+  .intro-card p{font:400 14.5px/1.62 var(--sans);color:var(--ink-soft);margin:20px 0 0}
+  .intro-stat-lead{display:flex;align-items:center;justify-content:center;gap:20px;
+    margin:0 0 16px;padding:22px 0 20px;border-top:1px solid var(--line)}
+  .intro-stat-lead .bn{text-align:center}
+  .intro-stat-lead .bn .n{font:600 38px/1 var(--sans);letter-spacing:-.025em;color:var(--hot)}
+  .intro-stat-lead .bn .l{font:500 9.5px/1.35 var(--mono);letter-spacing:.07em;text-transform:uppercase;color:var(--ink-soft);margin-top:8px}
+  .intro-arrow{font:500 12px/1 var(--mono);letter-spacing:.08em;text-transform:uppercase;
+    color:var(--ink-soft);align-self:center;padding-bottom:14px}
+  .intro-stat-sub{font:500 13px/1.4 var(--sans);color:var(--ink);margin:0 0 4px;
+    padding-bottom:22px;border-bottom:1px solid var(--line)}
+  .intro-stat-sub .n29{font-weight:600;color:var(--hot)}
+  .intro-src{font:500 9.5px/1.3 var(--mono)!important;letter-spacing:.06em;text-transform:uppercase;color:var(--ink-soft)!important;margin:16px 0 0!important;opacity:.8}
+  .intro-btns{display:flex;gap:12px;flex-wrap:wrap;justify-content:center;margin-top:26px}
+  .intro-card button{border-radius:6px;padding:15px 30px;font:600 15px/1 var(--sans);cursor:pointer;transition:background .15s,border-color .15s}
+  .intro-primary{background:var(--ink);color:#fff;border:none}
+  .intro-primary:hover{background:#000}
+  .intro-secondary{background:transparent;color:var(--ink);border:1.5px solid var(--ink)}
+  .intro-secondary:hover{background:rgba(26,26,26,.06)}
+
+  /* ---- Rank badge in panel ---- */
+  .rank-badge{display:inline-flex;align-items:center;gap:6px;background:var(--hot);color:#fff;
+    font:500 11px/1 var(--mono);letter-spacing:.05em;padding:5px 9px;border-radius:4px;margin-bottom:10px}
+
+  /* ---- Tour progress ---- */
+
+  @media(max-width:640px){
+    .plate{max-width:none;left:12px;right:12px;top:12px}
+    .controls{left:12px;bottom:14px}
+    .panel{width:100%;max-width:100%}
+    .hint{display:none}
+    .actions{right:12px;top:auto;bottom:90px}
+  }
+</style>
+</head>
+<body>
+<div id="map"></div>
+
+<div class="intro" id="intro">
+  <div class="intro-card">
+    <h1>Some streets carry nearly all the harm</h1>
+    <div class="intro-stat-lead">
+      <div class="bn"><div class="n" id="iv-share">13%</div><div class="l">of streets</div></div>
+      <div class="intro-arrow">carry</div>
+      <div class="bn"><div class="n">80%</div><div class="l">of severe crashes</div></div>
+    </div>
+    <div class="intro-stat-sub"><span class="n29">29%</span> of people killed or seriously injured are walking or biking</div>
+    <p>Charlotte's Vision Zero analysis found that just a small share of streets account for most fatal and serious crashes. This map takes an independent look at that concentration using network kernel density estimation.</p>
+    <p>The fourteen highlighted corridors are illustrative, not a ranking. They are hand-picked <em>parts of roads</em> — specific stretches where crash density looks highest on the map — chosen by eye, not by a measured cutoff. This is different from the "Comprehensive corridor data" table, which lists <em>whole roads</em> selected by fixed criteria (size and length), regardless of whether their density is high or low. The fourteen are worked examples of dangerous stretches; the table is a broad inventory of major roads.</p>
+    <p class="intro-src">Stats: City of Charlotte FY25 Vision Zero Report</p>
+    <div class="intro-btns">
+      <button id="intro-go" class="intro-primary">Explore the map</button>
+      <button id="intro-guide" class="intro-secondary">How to use this map</button>
+    </div>
+  </div>
+</div>
+
+
+<div class="tip" id="tip"></div>
+
+<div class="topbar">
+<button class="guide-btn" id="guide-btn">How to use this map</button>
+<button class="data-btn" id="data-btn">Comprehensive corridor data</button>
+<button class="about-btn" id="about-btn">Methodology</button>
+</div>
+<div class="guide-wrap" id="guide-wrap">
+  <div class="about" role="dialog" aria-modal="true" aria-label="How to use this map">
+    <button class="about-close" id="guide-close" aria-label="Close">×</button>
+    <p class="ab-tag">Getting started</p>
+    <h2>How to use this map</h2>
+    <p>This map shows where Charlotte's most serious crashes — those that kill or seriously injure someone — cluster along city streets.</p>
+    <h3>Reading the colors</h3>
+    <p>Streets are shaded by how tightly severe crashes concentrate along them: gray is low, then yellow, orange, and red for the highest concentration.</p>
+    <h3>Explore a corridor</h3>
+    <p>Click any red marker to open a detailed look at one of fourteen high-crash corridors — its crash counts, its rate per mile, and what the street is like on the ground. These fourteen are hand-picked <em>stretches</em> where density is highest — not whole roads, and separate from the "Comprehensive corridor data" table described below.</p>
+    <h3>Switch crash types</h3>
+    <p>Use the "Crash mode" controls to switch between all crashes, pedestrian-and-cyclist crashes, pedestrians only, or cyclists only.</p>
+    <h3>Turn the layer on or off</h3>
+    <p>The "Crash density" checkbox hides or shows the colored streets.</p>
+    <h3>Browse every major road</h3>
+    <p>The "Comprehensive corridor data" button opens a sortable table of Charlotte's larger arterials with severe-crash counts for each. Unlike the fourteen highlighted stretches, these are <em>whole roads</em> chosen by fixed criteria (size and length) — some have very high crash density, others fairly low. Click any column to sort, or click a corridor to highlight it on the map and see its numbers.</p>
+    <p>For details on how the analysis was built, see <strong>Methodology</strong>.</p>
+  </div>
+</div>
+<div class="about-wrap" id="about-wrap">
+  <div class="about" role="dialog" aria-modal="true" aria-label="About and methodology">
+    <button class="about-close" id="about-close" aria-label="Close">×</button>
+    <p class="ab-tag">About this map</p>
+    <h2>Charlotte severe-crash density</h2>
+    <p>A network-based view of where killed-or-seriously-injured (KSI) crashes concentrate across Charlotte's streets, with detail on fourteen high-injury corridors. It is intended as an independent, complementary lens on the City's own High-Injury Network — not a replacement for it. The two examine the same problem with different methods, and agreement between them is a useful signal.</p>
+    <p><strong>Two different things are shown here, and they should not be confused.</strong> The <strong>fourteen featured corridors</strong> are hand-picked <em>parts of roads</em> — specific high-density stretches, chosen by eye. The <strong>corridor data table</strong> ("Comprehensive corridor data") is a list of <em>whole roads</em> selected by fixed size-and-length criteria, whose density may be high or low. The fourteen are worked examples of dangerous stretches; the table is a broad inventory of major roads. Their crash counts are measured over different lengths and are not directly comparable.</p>
+
+    <h3>Why network kernel density</h3>
+    <p>Joining crash counts to road segments makes results depend on where the segment breaks are drawn — a form of the Modifiable Areal Unit Problem. The same dangerous stretch can look moderate when split across several short segments, or be diluted when averaged into one long one, so the apparent pattern partly reflects the segmentation rather than the crashes themselves. A kernel density estimate avoids pre-imposing those units: it describes how severe crashes concentrate as a continuous map along the network. The estimate is network-constrained — distances follow the street network rather than straight-line proximity — so crashes on a nearby parallel road do not bleed into a corridor the way a conventional heatmap would allow.</p>
+    <p>Concretely, the City's High-Injury Network assigns each crash a severity-weighted score and aggregates those scores into roughly 2,500-ft roadway segments, then ranks them. This map instead breaks the network into 150-ft lixels — segments roughly seventeen times shorter — and estimates a smooth density across them. The finer resolution means a short, intensely dangerous stretch is less likely to be averaged into a longer, calmer segment, and the continuous estimate doesn't hinge on where any single segment happens to begin or end.</p>
+
+    <h3>Severe crashes are counted, not weighted</h3>
+    <p>The City's High-Injury Network scores crashes with a weighted severity index applied per person killed or seriously injured. This map instead counts severe (KSI) crashes equally, for two reasons. First, a per-person weighting partly reflects how many people were in the vehicles — an occupancy factor, not a function of road design. Second, whether a severe crash ends in death or serious injury often turns on factors outside the road's control, such as trauma-response time, a victim's age, and chance. Counting severe crashes equally keeps the measure tied to road conditions and treats a corridor as dangerous before it produces a fatality.</p>
+
+    <h3>What the colors show</h3>
+    <p>On the map, the color scale shows the estimated density of KSI crashes along each street. Gray streets carry little or no severe-crash density; yellow, orange, and red mark rising concentration, using fixed density thresholds that are identical across all four crash-mode layers so they can be compared directly.</p>
+    <p>The corridor data table reuses the same four-color palette, but applies it differently: rather than fixed density thresholds, each table column is shaded by quartile — the lowest quarter of corridors gray, the highest quarter red, scaled within that column. So the map's colors mean "how concentrated," while the table's colors mean "how this corridor ranks against the others in that column." Same palette, two different jobs.</p>
+
+    <h3>Choosing the fourteen corridors</h3>
+    <p>The fourteen highlighted corridors are illustrative examples — hand-picked <em>parts of roads</em>, not whole roads. Each is a specific stretch drawn from the areas of most concentrated density, chosen by eye rather than a measured cutoff. They are not exhaustive and not ranked: other stretches also show elevated density. These fourteen were annotated to illustrate the range of conditions where severe crashes concentrate, and each is examined in detail. They are distinct from the corridor data table below, which lists whole roads by criteria; the density map itself, not either list, is the complete picture.</p>
+
+    <h3>The corridor data table</h3>
+    <p>Separately from the density map and the fourteen featured stretches, the "Comprehensive corridor data" table reports raw severe-crash counts for a representative set of Charlotte's larger through-roads. The crucial difference: these are <em>whole roads</em> selected by fixed criteria — not high-density stretches picked by eye. A road appears here because it meets the size-and-length test, whether its crash density turns out high or low. The criteria: built arterial thoroughfares (excluding local streets, ramps, and limited-access freeways) with four or more lanes or a posted speed of 35&nbsp;mph or higher, dissolved by street name, clipped to city limits, and kept only where at least four miles remain within the city. That yields 48 corridors — not an exhaustive list of arterials, just a consistent way to surface the big roads.</p>
+    <p>Each crash is attributed to a corridor if it falls within 75&nbsp;feet of it, so a crash near an intersection of two corridors may count toward both. Together these 48 corridors capture 589 of the 839 KSI crashes citywide, roughly 70%. Because the table measures each full arterial across its length, its counts are larger than — and shouldn't be compared directly to — the fourteen featured corridors, which describe shorter, specific high-density segments. Every crash column in the table (total KSI, fatal, serious, pedestrian, cyclist, and KSI per mile) is shaded independently by quartile: within that one column, the lowest quarter of corridors is gray, then yellow, orange, and red for the highest quarter. Each column is shaded against itself, so a red in the cyclist column and a red in the KSI column represent very different absolute counts — the color marks rank within the measure, not an absolute threshold. Length in miles is shown but not shaded.</p>
+
+    <h3>Corridor statistics</h3>
+    <p>For each highlighted corridor, the panel shows fatalities, serious injuries, total KSI, and KSI per mile (counts normalized by corridor length). Per-mile rates let short and long corridors be compared on equal footing; because some corridors are short, their per-mile rates are more sensitive to individual crashes and should be read as indicative rather than precise. Corridors that share an intersection may double-count crashes at that junction.</p>
+
+    <h3>Data &amp; method</h3>
+    <p>Crash records are killed-or-seriously-injured crashes, 2020–2024, from the City of Charlotte's <a href="https://data.charlottenc.gov/datasets/charlotte::fatal-or-serious-injury-crashes/about" target="_blank" rel="noopener">Fatal or Serious Injury Crashes</a> open dataset. The street network is the City of Charlotte / Mecklenburg County <a href="https://data.charlottenc.gov/datasets/charlotte::streets-2/explore" target="_blank" rel="noopener">street centerline</a> layer. The density map was produced with the <span class="mono-inline">spNetwork</span> package in R. This is an exploratory screening analysis, meant to surface where severe crashes concentrate rather than to serve as an exposure-normalized or causal model; individual corridor rankings should be read as indicative.</p>
+    <p>The 13% / 80% / 29% figures cited elsewhere are the City of Charlotte's own findings, from its FY25 Vision Zero Annual Report, and describe the City's High-Injury Network — a separate analysis from the density estimate shown here.</p>
+
+    <h3>Technical parameters</h3>
+    <p>Network kernel density estimated with the <span class="mono-inline">spNetwork</span> package in R, computed identically for every mode layer so the maps are directly comparable:</p>
+    <table class="param-tbl">
+      <tr><td>Method</td><td>Network KDE, discontinuous</td><td class="pi"><button class="pinfo" aria-label="explain">&#9432;</button></td></tr>
+      <tr class="pdesc"><td colspan="3">Density measured along streets; splits evenly at intersections so it doesn't over-count junctions.</td></tr>
+      <tr><td>Kernel</td><td>Quartic</td><td class="pi"><button class="pinfo" aria-label="explain">&#9432;</button></td></tr>
+      <tr class="pdesc"><td colspan="3">The weighting curve — nearby crashes count most, tapering to zero at the bandwidth.</td></tr>
+      <tr><td>Bandwidth</td><td>1,000 ft</td><td class="pi"><button class="pinfo" aria-label="explain">&#9432;</button></td></tr>
+      <tr class="pdesc"><td colspan="3">How far a crash's influence reaches along the road before fading out.</td></tr>
+      <tr><td>Adaptive bandwidth</td><td>No</td><td class="pi"><button class="pinfo" aria-label="explain">&#9432;</button></td></tr>
+      <tr class="pdesc"><td colspan="3">The 1,000 ft reach is fixed everywhere, not widened in sparse areas.</td></tr>
+      <tr><td>Lixel length</td><td>150 ft</td><td class="pi"><button class="pinfo" aria-label="explain">&#9432;</button></td></tr>
+      <tr class="pdesc"><td colspan="3">The network is cut into 150 ft pieces; density is estimated on each.</td></tr>
+      <tr><td>Min. lixel length</td><td>50 ft</td><td class="pi"><button class="pinfo" aria-label="explain">&#9432;</button></td></tr>
+      <tr class="pdesc"><td colspan="3">Leftover pieces shorter than this are merged, avoiding slivers.</td></tr>
+      <tr><td>Sampling</td><td>Lixel centers</td><td class="pi"><button class="pinfo" aria-label="explain">&#9432;</button></td></tr>
+      <tr class="pdesc"><td colspan="3">Density is evaluated at the midpoint of each 150 ft piece.</td></tr>
+      <tr><td>Event aggregation</td><td>30 ft</td><td class="pi"><button class="pinfo" aria-label="explain">&#9432;</button></td></tr>
+      <tr class="pdesc"><td colspan="3">Crashes within 30 ft snap together, reducing GPS jitter.</td></tr>
+      <tr><td>Divisor</td><td>bw</td><td class="pi"><button class="pinfo" aria-label="explain">&#9432;</button></td></tr>
+      <tr class="pdesc"><td colspan="3">Normalizes the estimate by bandwidth so values are comparable.</td></tr>
+      <tr><td>Coordinate system</td><td>NC State Plane, ft</td><td class="pi"><button class="pinfo" aria-label="explain">&#9432;</button></td></tr>
+      <tr class="pdesc"><td colspan="3">EPSG:2264 — projected feet, required for accurate distance math.</td></tr>
+      <tr><td>Network</td><td>Street centerlines</td><td class="pi"><button class="pinfo" aria-label="explain">&#9432;</button></td></tr>
+      <tr class="pdesc"><td colspan="3">58,613 city street segments — the geometry the density runs along.</td></tr>
+      <tr><td>Density units</td><td>Per linear ft &times;1,000</td><td class="pi"><button class="pinfo" aria-label="explain">&#9432;</button></td></tr>
+      <tr class="pdesc"><td colspan="3">Network KDE gives density per linear foot of street (not per area); raw values are tiny, so multiplied by 1,000 for a legible legend.</td></tr>
+    </table>
+    <p>Mode layers share one common color scale (the all-mode class breaks), so a given color denotes the same density across every layer. Because pedestrian and cyclist crashes are fewer, those layers read lower on the shared scale by design — this preserves true relative magnitude rather than re-normalizing each layer to itself. The cyclist layer in particular rests on a small number of crashes and should be read as indicative only.</p>
+  </div>
+</div>
+
+<div class="plate">
+  <h1>Where serious crashes concentrate</h1>
+  <p>Network density of fatal and serious-injury crashes, 2020–2024.</p>
+</div>
+
+<div class="loading" id="loading"><span class="spin"></span><span id="loadtxt">Loading crash density…</span></div>
+
+<div class="controls">
+  <label class="ctl-row"><input type="checkbox" id="toggle-heat" checked><span>Crash density</span></label>
+  <div class="mode-select" id="mode-select">
+    <div class="mode-lab">Crash mode</div>
+    <label class="mode-row"><input type="radio" name="mode" value="all" checked><span>All modes</span></label>
+    <label class="mode-row"><input type="radio" name="mode" value="pedbike"><span>Pedestrians &amp; Cyclists</span></label>
+    <label class="mode-row"><input type="radio" name="mode" value="ped"><span>Pedestrians only</span></label>
+    <label class="mode-row"><input type="radio" name="mode" value="bike"><span>Cyclists only</span></label>
+  </div>
+  <div class="legend">
+    <div class="lab" id="legend-lab">Severe-crash density <span id="legend-mode"></span></div>
+    <div class="ramp" style="background:linear-gradient(90deg,#E1E1E1 0%,#E1E1E1 25%,#FFD37F 25%,#FFD37F 50%,#E69800 50%,#E69800 75%,#E60000 75%,#E60000 100%)"></div>
+    <div class="ramp-ticks"><span>lower</span><span>0.4</span><span>0.7</span><span>1.4</span><span>higher</span></div>
+    <div class="ramp-unit">KSI crashes per linear foot of street (&times;1,000), shared scale across modes</div>
+  </div>
+</div>
+
+<div class="hint" id="hint">Tap a marker to explore a corridor</div>
+
+<aside class="panel" id="panel" aria-hidden="true">
+  <div class="panel-head">
+    <button class="panel-close" id="panel-close" aria-label="Close panel">×</button>
+    <div id="p-rank"></div>
+    <p class="tag" id="p-tag">High-injury corridor</p>
+    <h2 id="p-name">—</h2>
+    <p class="sub" id="p-sub"></p>
+  </div>
+  <div class="panel-body">
+    <div id="p-stats" style="display:none">
+      <div class="ksi-hero">
+        <div class="n" id="p-permile">—</div>
+        <div class="l">severe crashes per mile <span id="p-len"></span></div>
+      </div>
+      <div class="stat-strip">
+        <div class="stat"><div class="n" id="p-fatal">—</div><div class="l">Fatal</div></div>
+        <div class="stat"><div class="n" id="p-serious">—</div><div class="l">Serious</div></div>
+        <div class="stat"><div class="n" id="p-ksi">—</div><div class="l">Total KSI</div></div>
+      </div>
+    </div>
+    <p class="blurb" id="p-blurb"></p>
+    <p class="ksi-note" id="p-ksinote">Killed-or-seriously-injured (KSI) crashes, 2020–2024, normalized by corridor length. Corridors that share an intersection may double-count crashes at that junction.</p>
+  </div>
+</aside>
+
+<div class="corr-readout" id="corr-readout">
+  <button class="corr-readout-x" id="corr-readout-x" aria-label="Dismiss">×</button>
+  <div class="cr-name" id="cr-name"></div>
+  <div class="cr-sub">Full road · from the corridor data table</div>
+  <div class="cr-stats">
+    <div class="cr-stat"><span class="cr-n" id="cr-ksi">—</span><span class="cr-l">KSI</span></div>
+    <div class="cr-stat"><span class="cr-n" id="cr-fatal">—</span><span class="cr-l">Fatal</span></div>
+    <div class="cr-stat"><span class="cr-n" id="cr-serious">—</span><span class="cr-l">Serious</span></div>
+    <div class="cr-stat"><span class="cr-n" id="cr-ped">—</span><span class="cr-l">Ped</span></div>
+    <div class="cr-stat"><span class="cr-n" id="cr-bike">—</span><span class="cr-l">Bike</span></div>
+    <div class="cr-stat"><span class="cr-n" id="cr-permile">—</span><span class="cr-l">KSI/mi</span></div>
+  </div>
+</div>
+
+<div class="data-wrap" id="data-wrap">
+  <div class="data-modal" role="dialog" aria-modal="true" aria-label="Comprehensive corridor data">
+    <button class="about-close" id="data-close" aria-label="Close">×</button>
+    <h2>Major arterial corridors</h2>
+    <p class="data-note">A representative set of Charlotte's larger through-roads, selected by simple criteria rather than an official designation: roads with four or more lanes or a posted speed of 35&nbsp;mph or higher, and at least four miles in length within city limits. Interstate highways and other limited-access freeways are excluded, since this map is about surface streets. It isn't an exhaustive or authoritative list of arterials — just a consistent way to surface the big roads. These 48 corridors account for 589 of the 839 KSI crashes citywide (about 70%). Crashes are attributed to a corridor within 75&nbsp;feet; a crash near an intersection of two corridors may count for both. Click any corridor to view it on the map.</p>
+    <p class="data-note data-note-sep">These are <em>whole roads</em> chosen by criteria — not the same as the fourteen featured corridors on the map, which are hand-picked <em>high-density stretches</em>. A road here may have high or low crash density; it's listed because of its size and length, not its danger. Because each row measures a full road across its length, these counts run larger than the fourteen featured segments and shouldn't be compared directly.</p>
+    <div class="data-legend"><span class="dl-label">Shading (each column, by quartile):</span><span class="dl-swatch" style="background:#E1E1E1"></span><span class="dl-swatch" style="background:#FFD37F"></span><span class="dl-swatch" style="background:#E69800"></span><span class="dl-swatch" style="background:#E60000"></span><span class="dl-ends">lower&nbsp;&rarr;&nbsp;higher</span></div>
+    <div class="data-tablewrap">
+      <table class="data-table" id="data-table">
+        <thead><tr>
+          <th data-k="name">Corridor</th>
+          <th data-k="ksi" class="num sorted-desc">KSI</th>
+          <th data-k="fatal" class="num">Fatal</th>
+          <th data-k="serious" class="num">Serious</th>
+          <th data-k="ped" class="num">Ped</th>
+          <th data-k="bike" class="num">Bike</th>
+          <th data-k="per_mile" class="num">KSI/mi</th>
+          <th data-k="miles" class="num">Miles</th>
+        </tr></thead>
+        <tbody id="data-tbody"></tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<script>
+/* ============================================================
+   CORRIDOR METADATA
+   Keyed by POINT OBJECTID (1-14). lineId = matching corridor
+   line OBJECTID. Fill `blurb` (and optional fatal/serious) later.
+   ============================================================ */
+const CORRIDORS = {
+  1:  {lineId:12, name:"Nations Ford Road",                      extent:"Arrowood Road → I-77",                  area:"Colony Acres",                  miles:0.37, serious:8,  fatal:2,  blurb:'A high-density residential corridor with substantial apartment housing, but built for speed: two wide travel lanes with a shared center turn lane, and only two marked crosswalks along the entire stretch. It has the second-highest concentration of severe crashes per mile in this analysis. The <a href="https://moovitapp.com/index/en/public_transit-Nations_Ford_Rd_Arrowood_Rd-Charlotte_NC-stop_37151730-3660" target="_blank" rel="noopener">#24 Nations Ford Road bus</a> runs the corridor to Arrowood Station, but riders and residents cross wide, fast lanes with almost nowhere marked to do it. Near the Arrowood end, a <a href="https://www.wbtv.com/2025/10/12/one-person-dead-three-others-hurt-after-south-charlotte-crash/" target="_blank" rel="noopener">crash killed one person and critically injured three others</a> in October 2025 — after the 2020–2024 window this map covers.'},
+  2:  {lineId:14, name:"West Boulevard",                         extent:"Ross Avenue → Fordham Road",            area:"Revolution Park",               miles:0.38, serious:3,  fatal:6,  blurb:'One of the highest concentrations of severe crashes per mile in this analysis. The corridor runs past significant apartment housing but carries high speeds, with frequent conflict where cars enter and exit along it. West Boulevard is an <a href="https://www.charlottenc.gov/files/sharedassets/city/v/1/growth-and-development/documents/corridors/west-boulevard/west-blvd-2025-update.pdf" target="_blank" rel="noopener">active city corridor-investment area</a>, with streetscape improvements and further work planned.'},
+  3:  {lineId:10, name:"Brookshire Boulevard",                   extent:"Idaho Drive → Hoskins Road",            area:"Thomasboro-Hoskins",            miles:0.33, serious:6,  fatal:3,  blurb:'The highest concentration of severe crashes per mile in this analysis, and the reason is in the road\'s design: this is where NC-16 transitions from a grade-separated freeway (connecting to I-277) into a surface commercial arterial — three lanes each way, signalized intersections, curb cuts, and pedestrians, but with drivers still carrying highway speeds off the freeway section. At the Hoskins Road intersection, Lisa Faith Mobley, 53, on her way to catch a bus to work, was <a href="https://www.wsoctv.com/news/local/cmpd-pedestrian-struck-car-brookshire-blvd/113014936/" target="_blank" rel="noopener">struck and killed crossing before dawn</a> in 2014; the driver had a green light and was not charged. That death predates the map\'s 2020–2024 window but the crossing conditions remain.'},
+  4:  {lineId:9,  name:"Beatties Ford Road",                     extent:"Saint John Street → Griers Grove Road", area:"Lincoln Heights",               miles:0.63, serious:6,  fatal:5,  blurb:'A busy arterial through the Lincoln Heights area with high transit dependence — it carries the <a href="https://transitapp.com/en/region/charlotte/cats/bus-7" target="_blank" rel="noopener">#7 Beatties Ford</a>, <a href="https://charlotteledger.substack.com/p/charlotte-transit-options-4-possibilities" target="_blank" rel="noopener">one of the two busiest bus routes in the CATS system</a> — but long gaps between crosswalks leave riders and pedestrians crossing where they can. <a href="https://www.usnews.com/education/k12/north-carolina/northwest-school-of-the-arts-14572" target="_blank" rel="noopener">Northwest School of the Arts</a> sits directly on it at 1415 Beatties Ford. Pedestrian deaths here include James Leon Hall, 58, <a href="https://www.qcnews.com/news/local-news/person-seriously-hurt-after-crash-in-north-charlotte-medic/" target="_blank" rel="noopener">struck and killed by a hit-and-run driver</a> in the 2100 block at LaSalle Street in 2025, and 18-year-old Aleki Langi, <a href="https://www.qcnews.com/charlotte/really-bad-scene-from-crash-on-beatties-ford-road/" target="_blank" rel="noopener">killed by a driver who fled after hitting several pedestrians</a> in the 1400 block. Both occurred in 2025, after the map\'s 2020–2024 window.'},
+  5:  {lineId:13, name:"West Sugar Creek Road",                  extent:"Munsee Street → Graham Street",         area:"Sugar Creek / Mineral Springs", miles:0.64, serious:8,  fatal:4,  blurb:'A wide, high-speed corridor running toward the I-85 interchange, where some crosswalks are so faded they\'re barely visible. Its intersection with Graham Street has marked crossings but also wide slip lanes that let drivers turn at speed — hard to cross on foot. In the 2300 block near Graham, Frank Leon Dent, 64, was <a href="https://www.wcnc.com/article/news/local/fatal-2025-hit-and-run-north-charlotte-cmpd/275-28d91ba6-24db-44e8-8a13-9e09982372b9" target="_blank" rel="noopener">struck by a hit-and-run driver while crossing</a> in 2025 (after the map\'s 2020–2024 window) and later died, and a separate pedestrian was <a href="https://www.wbtv.com/2024/08/11/pedestrian-hit-seriously-hurt-northeast-charlotte/" target="_blank" rel="noopener">seriously injured at the same junction</a> in 2024.'},
+  6:  {lineId:11, name:"Old Statesville Road",                   extent:"Gibbon Road → Beatties Ford Road",      area:"Slater Road / Hamilton Circle", miles:0.63, serious:7,  fatal:8,  blurb:'A four-lane commercial corridor with very few crossings and heavy truck traffic from the surrounding warehouses — the third-highest concentration of severe crashes per mile in this analysis. It carries the <a href="https://moovitapp.com/index/en/public_transit-Old_Statesville_Rd_Gibbon_Rd-Charlotte_NC-stop_37151990-3660" target="_blank" rel="noopener">#7 Beatties Ford</a>, <a href="https://charlotteledger.substack.com/p/charlotte-transit-options-4-possibilities" target="_blank" rel="noopener">one of the two busiest bus routes in the CATS system</a>, yet at one point where bus stops face each other across the road, the crossing has ADA landing pads and pedestrian signage but no painted crosswalk — leaving riders to cross four lanes with no marked place to do it.'},
+  7:  {lineId:15, name:"University City Boulevard",              extent:"Harris Houston Road → I-85",            area:"University City",               miles:1.64, serious:14, fatal:6,  blurb:'A very busy commercial corridor anchored by large shopping centers, where the road widens into huge intersections with many turn lanes, slip lanes, and long crossing distances on foot. In the 7000 block near IKEA, Barbara Coleman, 53, was <a href="https://www.wbtv.com/2019/06/20/pedestrian-struck-killed-university-city/" target="_blank" rel="noopener">struck and killed crossing the boulevard</a> at a point CMPD described as not marked or controlled for pedestrians; that death was in 2019, before the map\'s 2020–2024 window, but the crossing conditions remain. With fourteen serious injuries and six deaths in-window, it carries one of the higher severe-crash totals in this analysis.'},
+  8:  {lineId:7,  name:"North Tryon Street",                     extent:"Craighead Road → WT Harris Boulevard",  area:"University City / Hidden Valley",miles:1.90, serious:13, fatal:14, blurb:'A wide commercial corridor in the northern crescent — three lanes in stretches, with large gaps between crossings and narrow sidewalks, some so poorly maintained that grass has overgrown onto them. Riders regularly wait for the bus alongside fast traffic. It carries the <a href="https://transitapp.com/en/region/charlotte/cats/bus-11" target="_blank" rel="noopener">#11 North Tryon</a>, <a href="https://www.wfae.org/charlotte-area/2022-08-04/cats-bus-schedule-cuts-target-the-busiest-routes-low-ridership-routes-are-spared" target="_blank" rel="noopener">one of CATS\'s busier routes</a>, and is among the highest-fatality corridors in this analysis. The crashes are frequently pedestrians struck at night: Ace Chambers, 74, was <a href="https://www.wcnc.com/article/news/crime/pedestrian-killed-in-hit-and-run-crash/275-bd3ec504-c068-4c32-a29b-fe442ee1e6ac" target="_blank" rel="noopener">killed in a hit-and-run while walking near 4337 North Tryon</a> in 2025, and a separate <a href="https://www.wbtv.com/2025/11/29/cmpd-investigating-fatal-crash-north-charlotte/" target="_blank" rel="noopener">fatal crash</a> occurred in the 1200 block later that year. Both fall in 2025, after the map\'s 2020–2024 window.'},
+  9:  {lineId:8,  name:"The Plaza",                              extent:"East 36th Street → Milton Road",        area:"Plaza-Shamrock / NoDa",         miles:1.06, serious:5,  fatal:8,  blurb:'A residential corridor with narrow sidewalks and many curb cuts, carrying two bus routes — the <a href="https://transitapp.com/en/region/charlotte/cats/bus-3" target="_blank" rel="noopener">#3 Plaza</a> and the <a href="https://transitapp.com/en/region/charlotte/cats/bus-4" target="_blank" rel="noopener">#4 Belmont</a> — through the NoDa end toward Milton Road. Its intersection with East 36th Street has seen repeated pedestrian deaths: Lance Sotelo, 25, was <a href="https://www.wcnc.com/article/news/crime/pedestrian-killed-east-charlotte-crash/275-65695570-6fcd-4214-b09c-1d6cdece0e9a" target="_blank" rel="noopener">killed by a red-light-running driver who fled the scene</a> in early 2026 (after the map\'s 2020–2024 window), and another pedestrian was <a href="https://www.wcnc.com/article/news/local/deadly-crash-east-charlotte/275-fe2716ba-8d80-47c1-80f9-3315baea230d" target="_blank" rel="noopener">struck and killed at the same spot</a> in 2024.'},
+  10: {lineId:5,  name:"Eastway Drive",                          extent:"Central Avenue → North Tryon Street",   area:"Plaza-Shamrock",                miles:1.22, serious:9,  fatal:6,  blurb:'A residential corridor with few turn lanes, traffic constantly entering and exiting, and long stretches without a crosswalk. <a href="https://hl.mecknc.gov/Properties/Designated-Historic-Landmarks/charlotte/plaza-midwood/Garinger-High-School" target="_blank" rel="noopener">Garinger High School</a>, with roughly 1,900 students, sits directly on it at 1100 Eastway Drive, and the road carries <a href="https://www.wfae.org/local-news/2021-05-15/are-bus-only-lanes-a-key-part-of-charlottes-transit-future" target="_blank" rel="noopener">one of CATS\'s busier bus routes</a> to uptown. A <a href="https://belmontcharlotte.org/news/parkwood-rd-diet-recommended-to-city-council/" target="_blank" rel="noopener">road diet has been considered</a> for the corridor. In the 2900 block, a <a href="https://www.charlottenc.gov/cmpd/News-Information/Newsroom/Fatal-Crash-Investigation-in-the-Eastway-Division-11.17.25" target="_blank" rel="noopener">fatal collision</a> killed one person in late 2025 — after the 2020–2024 window this map covers.'},
+  11: {lineId:1,  name:"Independence Boulevard",                 extent:"Conference Drive → Norland Road",       area:"Woodberry Forest",              miles:0.92, serious:4,  fatal:8,  blurb:'Independence is consistently among Charlotte\'s highest-crash surface streets — a textbook "stroad," engineered for highway speeds (posted up to 55 mph) but lined with continuous curb cuts feeding traffic in and out of commercial lots. The danger comes from that conflict: fast-moving through-traffic constantly crossing paths with vehicles entering and exiting. Sidewalks exist, but the endless driveway cuts make them unsafe for anyone on foot, and crossing the road itself is effectively impossible along much of the corridor. It\'s maintained by NCDOT rather than the city, which limits what Charlotte can change on its own — a recurring obstacle on several corridors here.'},
+  12: {lineId:3,  name:"Sharon Amity Road / WT Harris Boulevard",extent:"Albemarle Road → Grier Road",           area:"Eastland / Hickory Grove",      miles:1.93, serious:7,  fatal:14, blurb:'One of the densest concentrations of severe crashes in east Charlotte, where speed is the defining factor. Much of the stretch is residential, yet it\'s built like a through-route: wide lanes, narrow sidewalks, and cars pulling in and out of driveways alongside fast-moving traffic. Near the Central Avenue end, a speeding driver <a href="https://www.wcnc.com/article/news/crime/sharon-amity-road-closure-wcnc-charlotte-travel/275-1ef4c123-604b-45e6-926a-aef08d98d897" target="_blank" rel="noopener">ran a red light and struck and killed a pedestrian</a>, and more recently a pedestrian was <a href="https://www.qcnews.com/news/local-news/pedestrian-seriously-hurt-after-being-hit-in-east-charlotte-medic/" target="_blank" rel="noopener">critically injured crossing at Campbell Drive</a>.'},
+  13: {lineId:4,  name:"WT Harris Boulevard",                    extent:"Albemarle Road → Sharon Amity Road",    area:"Hickory Grove",                 miles:1.07, serious:10, fatal:6,  blurb:'A short connector linking two of east Charlotte\'s most crash-heavy arterials, Albemarle Road and Sharon Amity Road, and part of the same cluster of severe crashes. It carries the same design as its neighbors — wide lanes, narrow sidewalks, driveway turn-ins alongside fast traffic — and the <a href="https://transitapp.com/en/region/charlotte/cats/bus-3" target="_blank" rel="noopener">#3 bus</a> runs the length of it, its riders waiting at stops set right against the traffic.'},
+  14: {lineId:2,  name:"Albemarle Road / Central Avenue",        extent:"WT Harris Boulevard → Norland Road",    area:"Eastland",                      miles:1.08, serious:12, fatal:8,  blurb:'A commercial corridor of up to six lanes — three in each direction — through a transit-dependent part of east Charlotte, its sidewalks often a single narrow strip pressed against the traffic. The <a href="https://transitapp.com/en/region/charlotte/cats/bus-9" target="_blank" rel="noopener">#9 Central Avenue</a>, <a href="https://www.wfae.org/charlotte-area/2022-02-24/cats-is-banking-on-crosstown-bus-routes-but-new-data-show-they-are-mostly-empty" target="_blank" rel="noopener">Charlotte\'s busiest local bus route</a>, runs this stretch, yet most stops are just a sign on the sidewalk beside high-speed traffic. That mix of highway-style design with pedestrians and transit riders is the core hazard: in the 6300 block, pedestrian Charles Evans Frazier was <a href="https://www.charlottenc.gov/cmpd/News-Information/Newsroom/Fatal-Crash-Investigation-in-the-Hickory-Grove-Division-6300-Albemarle-Rd-03-11-2024" target="_blank" rel="noopener">struck and killed in the roadway in 2024</a>, and a separate pedestrian was <a href="https://www.qcnews.com/news/local-news/pedestrian-critically-injured-in-east-charlotte-crash-medic/" target="_blank" rel="noopener">critically injured in the same block</a>.'}
+};
+
+const map = new maplibregl.Map({
+  container:'map',
+  style:'https://basemaps.cartocdn.com/gl/positron-gl-style/style.json',
+  center:[-80.82,35.24],
+  zoom:10.4,
+  minZoom:9.6,
+  maxZoom:17,
+  pitch:0,
+  maxPitch:0,
+  pitchWithRotate:false,
+  dragRotate:false,
+  attributionControl:{compact:true}
+});
+map.addControl(new maplibregl.NavigationControl({showCompass:false}),'top-right');
+
+let selectedPointId = null;
+let corridorsData = null;
+let pulseRAF = null;
+
+map.on('load', ()=>{
+  /* ---- Hotspots first (instant) ---- */
+  Promise.all([
+    fetch('corridors.geojson').then(r=>r.json()),
+    fetch('corridorpoints.json').then(r=>r.json())
+  ]).then(([lines,points])=>{
+    corridorsData = lines;
+
+    map.addSource('corridors',{type:'geojson',data:lines});
+    // selection casing — a wide soft halo. Moved BENEATH the heatmap once it loads,
+    // so the crash-density colors ride on top and stay fully visible.
+    map.addLayer({
+      id:'corridor-casing', type:'line', source:'corridors',
+      layout:{'line-cap':'round','line-join':'round'},
+      paint:{'line-color':'#969691','line-width':7,'line-opacity':0,'line-blur':0.4},
+      filter:['==','OBJECTID',-1]
+    });
+
+    map.addSource('points',{type:'geojson',data:points});
+    map.addLayer({
+      id:'point-halo', type:'circle', source:'points',
+      paint:{
+        'circle-radius':['interpolate',['linear'],['zoom'],9,10,12,14,15,18],
+        'circle-color':'#E60000','circle-opacity':0.12
+      }
+    });
+    map.addLayer({
+      id:'point-dot', type:'circle', source:'points',
+      paint:{
+        'circle-radius':['interpolate',['linear'],['zoom'],9,5,12,6.5,15,8],
+        'circle-color':'#E60000',
+        'circle-stroke-width':2,'circle-stroke-color':'#fff'
+      }
+    });
+    // small marker for the selected point so it doesn't cover the corridor
+    map.addLayer({
+      id:'point-sel', type:'circle', source:'points',
+      paint:{
+        'circle-radius':3.5,
+        'circle-color':'#fff',
+        'circle-stroke-width':2,'circle-stroke-color':'#E60000'
+      },
+      filter:['==','OBJECTID',-1]
+    });
+
+    map.on('click','point-dot',e=>selectPoint(e.features[0].properties.OBJECTID));
+    // click empty map (not on a corridor marker) → clear the comprehensive-table highlight + readout
+    map.on('click',e=>{
+      const hits=map.queryRenderedFeatures(e.point,{layers:['point-dot','point-sel']});
+      if(hits && hits.length) return;               // clicked a marker; let selectPoint handle it
+      if(map.getLayer('corridors-all-hl')) map.setFilter('corridors-all-hl',['==','name','__none__']);
+      const cr=document.getElementById('corr-readout'); if(cr) cr.classList.remove('show');
+    });
+    map.on('mouseenter','point-dot',e=>{
+      map.getCanvas().style.cursor='pointer';
+      const pid=e.features[0].properties.OBJECTID;
+      const meta=CORRIDORS[pid]; if(!meta) return;
+      const tip=document.getElementById('tip');
+      tip.textContent=meta.name;
+      tip.classList.add('show');
+    });
+    map.on('mousemove','point-dot',e=>{
+      const tip=document.getElementById('tip');
+      tip.style.left=e.point.x+'px'; tip.style.top=e.point.y+'px';
+    });
+    map.on('mouseleave','point-dot',()=>{
+      map.getCanvas().style.cursor='';
+      document.getElementById('tip').classList.remove('show');
+    });
+  });
+
+  /* ---- Heatmap streams in behind ---- */
+  // Shared paint for every density layer (identical color breaks = comparable across modes)
+  function densityPaint(){
+    return {
+      'line-width':['interpolate',['linear'],['zoom'],
+        9,  ['step',['get','density'], 0.8, 0.000372,1.6, 0.000736,1.6, 0.001430,2.2],
+        11, ['step',['get','density'], 0.5, 0.000372,1.2, 0.000736,1.2, 0.001430,1.8],
+        14, ['step',['get','density'], 0.7, 0.000372,2.2, 0.000736,2.2, 0.001430,3.4]
+      ],
+      'line-color':['step',['get','density'],
+        '#E1E1E1',
+        0.000372,'#FFD37F',
+        0.000736,'#E69800',
+        0.001430,'#E60000'
+      ],
+      'line-opacity':['step',['get','density'], 0.22, 0.000372,0.9]
+    };
+  }
+
+  // Four density layers share one id-space; only one visible at a time.
+  const DENSITY_LAYERS = {
+    all:     {id:'nkde',         file:'heatmap_web.geojson'},
+    ped:     {id:'nkde-ped',     file:'heatmap_ped.geojson'},
+    bike:    {id:'nkde-bike',    file:'heatmap_bike.geojson'},
+    pedbike: {id:'nkde-pedbike', file:'heatmap_pedbike.geojson'}
+  };
+  window.__densityReady = {};
+
+  Promise.all(Object.entries(DENSITY_LAYERS).map(([mode,cfg])=>
+    fetch(cfg.file).then(r=>r.json()).then(geo=>{
+      map.addSource(cfg.id,{type:'geojson',data:geo,tolerance:0.1,buffer:128,maxzoom:14});
+      const layer={
+        id:cfg.id, type:'line', source:cfg.id,
+        layout:{'line-cap':'round','visibility': mode==='all' ? 'visible' : 'none'},
+        paint:densityPaint()
+      };
+      let beforeId = map.getLayer('point-halo') ? 'point-halo' : undefined;
+      map.addLayer(layer, beforeId);
+      window.__densityReady[mode]=true;
+    }).catch(()=>{ window.__densityReady[mode]=false; })
+  )).then(()=>{
+    // Re-raise basemap labels above the density layers so street names stay readable.
+    try{
+      const lyrs = map.getStyle().layers;
+      lyrs.forEach(l=>{
+        if(l.type==='symbol' && l.layout && (l.layout['text-field']!==undefined || /label|place|poi|road.*name/i.test(l.id))){
+          if(map.getLayer('point-halo')) map.moveLayer(l.id,'point-halo');
+          else map.moveLayer(l.id);
+          // Show street/road name labels further out (lower zoom) than the basemap default.
+          if(/road|street|highway|transportation/i.test(l.id) && !/shield|ref/i.test(l.id)){
+            try{
+              const curMin = (typeof l.minzoom === 'number') ? l.minzoom : 12;
+              if(curMin > 10) map.setLayerZoomRange(l.id, 10, (typeof l.maxzoom==='number'? l.maxzoom : 24));
+            }catch(e){}
+          }
+        }
+      });
+    }catch(e){}
+    doneLoading();
+  }).catch(()=>{ doneLoading('Density layer failed to load'); });
+});
+
+function doneLoading(msg){
+  const l=document.getElementById('loading');
+  if(msg){document.getElementById('loadtxt').textContent=msg;return;}
+  l.classList.add('done');
+}
+
+function animateNumber(el, target){
+  if(!el) return;
+  if(target==null){ el.textContent='—'; return; }
+  const dur=520, t0=performance.now();
+  function step(now){
+    const p=Math.min(1,(now-t0)/dur);
+    const eased=1-Math.pow(1-p,3);           // ease-out cubic
+    el.textContent=(target*eased).toFixed(1);
+    if(p<1) requestAnimationFrame(step); else el.textContent=target.toFixed(1);
+  }
+  requestAnimationFrame(step);
+}
+
+function selectPoint(pid){
+  const meta = CORRIDORS[pid];
+  if(!meta) return;
+  selectedPointId = pid;
+
+  // clear any comprehensive-table highlight + readout so the two selections don't coexist
+  if(map.getLayer('corridors-all-hl')) map.setFilter('corridors-all-hl',['==','name','__none__']);
+  const cr=document.getElementById('corr-readout'); if(cr) cr.classList.remove('show');
+
+  // frame the corridor with a casing drawn BENEATH the heatmap (density rides on top, stays visible)
+  map.setFilter('corridor-casing',['==','OBJECTID',meta.lineId]);
+  map.setFilter('point-sel',['==','OBJECTID',pid]);
+  map.setFilter('point-dot',['!=','OBJECTID',pid]);
+  map.setFilter('point-halo',['!=','OBJECTID',pid]);
+
+  startPulse();
+  zoomToCorridor(meta.lineId);
+
+  // panel content
+  document.getElementById('p-rank').innerHTML = '';
+  document.getElementById('p-tag').textContent  = meta.area || 'High-injury corridor';
+  document.getElementById('p-name').textContent = meta.name;
+  document.getElementById('p-sub').textContent  = meta.extent || '';
+  const blurbEl = document.getElementById('p-blurb');
+  if(meta.blurb && meta.blurb.trim()){
+    blurbEl.innerHTML = meta.blurb; blurbEl.classList.remove('placeholder');
+  }else{
+    blurbEl.textContent = "Blurb for "+meta.name+" goes here. Edit the CORRIDORS table in the page source to add it.";
+    blurbEl.classList.add('placeholder');
+  }
+  const stats=document.getElementById('p-stats');
+  if(meta.fatal!=null||meta.serious!=null){
+    stats.style.display='block';
+    const f=meta.fatal??0, s=meta.serious??0, ksi=f+s;
+    const perMile = meta.miles ? (ksi/meta.miles) : null;
+    animateNumber(document.getElementById('p-permile'), perMile);
+    document.getElementById('p-len').textContent = meta.miles ? '('+meta.miles.toFixed(2)+' mi)' : '';
+    document.getElementById('p-fatal').textContent = f;
+    document.getElementById('p-serious').textContent = s;
+    document.getElementById('p-ksi').textContent = ksi;
+  }else stats.style.display='none';
+
+  document.getElementById('panel').classList.add('open');
+  document.getElementById('panel').setAttribute('aria-hidden','false');
+  document.getElementById('hint').classList.add('hide');
+}
+
+function zoomToCorridor(lineId){
+  if(!corridorsData) return;
+  const f = corridorsData.features.find(ft=>ft.properties.OBJECTID===lineId);
+  if(!f) return;
+  const b = new maplibregl.LngLatBounds();
+  const addCoords = c => Array.isArray(c[0]) ? c.forEach(addCoords) : b.extend(c);
+  addCoords(f.geometry.coordinates);
+  const panelW = window.innerWidth>640 ? 400 : 0;  // leave room for the side panel
+  const ranksW = (document.getElementById('ranks')?.classList.contains('open') && window.innerWidth>980) ? 388 : 0;
+  map.fitBounds(b,{padding:{top:90,bottom:90,left:80+ranksW,right:80+panelW},duration:800,maxZoom:14.5});
+}
+
+let pulseT0=null;
+function startPulse(){
+  cancelAnimationFrame(pulseRAF);
+  if(map.getLayer('corridor-casing')){
+    map.setPaintProperty('corridor-casing','line-opacity',0.9);
+    map.setPaintProperty('corridor-casing','line-width',7);
+  }
+}
+
+function closePanel(){
+  document.getElementById('panel').classList.remove('open');
+  document.getElementById('panel').setAttribute('aria-hidden','true');
+  cancelAnimationFrame(pulseRAF); pulseRAF=null;
+  map.setFilter('corridor-casing',['==','OBJECTID',-1]);
+  if(map.getLayer('corridor-casing')) map.setPaintProperty('corridor-casing','line-opacity',0);
+  map.setFilter('point-sel',['==','OBJECTID',-1]);
+  map.setFilter('point-dot',['!=','OBJECTID',-9999]);   // show all again
+  map.setFilter('point-halo',['!=','OBJECTID',-9999]);
+  selectedPointId=null;
+  // also clear the comprehensive-table highlight + readout card
+  if(map.getLayer('corridors-all-hl')) map.setFilter('corridors-all-hl',['==','name','__none__']);
+  const cr=document.getElementById('corr-readout'); if(cr) cr.classList.remove('show');
+}
+document.getElementById('panel-close').addEventListener('click',closePanel);
+document.addEventListener('keydown',e=>{if(e.key==='Escape')closePanel();});
+
+const MODE_IDS={all:'nkde',ped:'nkde-ped',bike:'nkde-bike',pedbike:'nkde-pedbike'};
+let currentMode='all';
+
+function applyDensityVisibility(){
+  const on = document.getElementById('toggle-heat').checked;
+  Object.entries(MODE_IDS).forEach(([mode,id])=>{
+    if(!map.getLayer(id)) return;
+    const v = (on && mode===currentMode) ? 'visible' : 'none';
+    map.setLayoutProperty(id,'visibility',v);
+  });
+}
+
+document.querySelectorAll('.param-tbl .pinfo').forEach(btn=>{
+  btn.addEventListener('click',()=>{
+    const row=btn.closest('tr');
+    const desc=row.nextElementSibling;
+    if(desc && desc.classList.contains('pdesc')) desc.classList.toggle('open');
+  });
+});
+
+document.getElementById('toggle-heat').addEventListener('change',applyDensityVisibility);
+
+const MODE_LABELS={all:'',ped:'· Pedestrian',bike:'· Cyclist',pedbike:'· Ped + Cyclist'};
+function updateLegendCaption(){
+  const el=document.getElementById('legend-mode');
+  if(el) el.textContent = MODE_LABELS[currentMode] || '';
+}
+
+document.querySelectorAll('input[name="mode"]').forEach(r=>{
+  r.addEventListener('change',e=>{
+    if(!e.target.checked) return;
+    currentMode=e.target.value;
+    applyDensityVisibility();
+    updateLegendCaption();
+  });
+});
+
+/* ===================== INTRO OVERLAY + OPENING MOVE ===================== */
+let introDismissed=false;
+function dismissIntro(){
+  if(introDismissed) return; introDismissed=true;
+  const intro=document.getElementById('intro');
+  intro.classList.add('gone');
+  setTimeout(()=>{ intro.style.display='none'; },600);
+  // cinematic opening: gentle rotate + zoom into the city
+  map.easeTo({center:[-80.82,35.24],zoom:11,bearing:0,pitch:0,duration:2600,easing:t=>t*(2-t)});
+  setTimeout(()=>document.getElementById('hint').classList.remove('hide'),2600);
+}
+document.getElementById('intro-go').addEventListener('click',dismissIntro);
+
+/* ===================== HOW-TO-USE GUIDE SHEET ===================== */
+const guideWrap=document.getElementById('guide-wrap');
+function openGuide(){ guideWrap.classList.add('open'); }
+function closeGuide(){ guideWrap.classList.remove('open'); }
+document.getElementById('guide-btn').addEventListener('click',openGuide);
+document.getElementById('intro-guide').addEventListener('click',openGuide);
+document.getElementById('guide-close').addEventListener('click',closeGuide);
+guideWrap.addEventListener('click',e=>{ if(e.target===guideWrap) closeGuide(); });
+document.addEventListener('keydown',e=>{ if(e.key==='Escape') closeGuide(); });
+
+/* ===================== ABOUT / METHODOLOGY SHEET ===================== */
+const aboutWrap=document.getElementById('about-wrap');
+document.getElementById('about-btn').addEventListener('click',()=>aboutWrap.classList.add('open'));
+document.getElementById('about-close').addEventListener('click',()=>aboutWrap.classList.remove('open'));
+aboutWrap.addEventListener('click',e=>{ if(e.target===aboutWrap) aboutWrap.classList.remove('open'); });
+document.addEventListener('keydown',e=>{ if(e.key==='Escape') aboutWrap.classList.remove('open'); });
+
+/* ===================== COMPREHENSIVE CORRIDOR DATA TABLE ===================== */
+(function(){
+  let corridorRows=[];
+  let sortKey='ksi', sortDir='desc';
+  let dataLoaded=false;
+
+  const dataWrap=document.getElementById('data-wrap');
+  const tbody=document.getElementById('data-tbody');
+  const table=document.getElementById('data-table');
+
+  function ensureLayer(geo){
+    if(map.getSource('corridors-all')) return;
+    map.addSource('corridors-all',{type:'geojson',data:geo});
+    // place the highlight beneath the density lines (like the 14-corridor casing) so colors ride on top
+    let beforeId = map.getLayer('nkde') ? 'nkde' : (map.getLayer('point-halo') ? 'point-halo' : undefined);
+    map.addLayer({
+      id:'corridors-all-hl', type:'line', source:'corridors-all',
+      layout:{'line-cap':'round','line-join':'round'},
+      paint:{'line-color':'#969691','line-width':7,'line-opacity':0.85,'line-blur':0.4},
+      filter:['==','name','__none__']
+    }, beforeId);
+  }
+
+  function loadData(){
+    if(dataLoaded) return Promise.resolve();
+    return fetch('corridors_table.geojson').then(r=>r.json()).then(geo=>{
+      corridorRows = geo.features.map(f=>({p:f.properties, f:f}));
+      ensureLayer(geo);
+      computeBreaks();
+      dataLoaded=true;
+    });
+  }
+
+  // quartile breaks per shaded column (all crash measures; miles is not shaded)
+  let breaks={ksi:[],fatal:[],serious:[],ped:[],bike:[],per_mile:[]};
+  function quartileBreaks(vals){
+    const s=vals.slice().sort((a,b)=>a-b);
+    const q=p=>{ const i=(s.length-1)*p; const lo=Math.floor(i),hi=Math.ceil(i); return s[lo]+(s[hi]-s[lo])*(i-lo); };
+    return [q(0.25),q(0.5),q(0.75)];
+  }
+  function computeBreaks(){
+    ['ksi','fatal','serious','ped','bike','per_mile'].forEach(k=>{
+      breaks[k]=quartileBreaks(corridorRows.map(r=>+r.p[k]));
+    });
+  }
+  function shadeClass(val,key){
+    const b=breaks[key]; if(!b||!b.length) return '';
+    const v=+val;
+    if(v<=b[0]) return 'c0';
+    if(v<=b[1]) return 'c1';
+    if(v<=b[2]) return 'c2';
+    return 'c3';
+  }
+  function fmt(v){ return (v===null||v===undefined)?'—':v; }
+
+  // Turn abbreviated street names into readable display names (table only; highlight still matches raw name)
+  const SPECIAL={
+    'E W T Harris Bv':'East W.T. Harris Boulevard',
+    'W W T Harris Bv':'West W.T. Harris Boulevard',
+    'The Plaza':'The Plaza',
+    'N C 73 Hy':'NC-73 Highway',
+    'N Us 29 By-Pass Hy':'North US-29 Bypass'
+  };
+  const SUFFIX={Bv:'Boulevard',Rd:'Road',St:'Street',Av:'Avenue',Dr:'Drive',Py:'Parkway',Hy:'Highway',Ln:'Lane',Cr:'Circle',Ext:'Extension',Ct:'Court',Pl:'Place'};
+  const PREFIX={N:'North',S:'South',E:'East',W:'West'};
+  function displayName(raw){
+    if(SPECIAL[raw]) return SPECIAL[raw];
+    const parts=raw.split(' ');
+    return parts.map((w,i)=>{
+      if(i===0 && PREFIX[w]) return PREFIX[w];
+      if(i===parts.length-1 && SUFFIX[w]) return SUFFIX[w];
+      return w;
+    }).join(' ');
+  }
+
+  function render(){
+    corridorRows.sort((a,b)=>{
+      let va=a.p[sortKey], vb=b.p[sortKey];
+      if(sortKey==='name'){ return sortDir==='asc'? String(va).localeCompare(vb): String(vb).localeCompare(va); }
+      va=+va; vb=+vb; return sortDir==='asc'? va-vb : vb-va;
+    });
+    tbody.innerHTML='';
+    corridorRows.forEach(row=>{
+      const p=row.p;
+      const tr=document.createElement('tr');
+      tr.innerHTML=`<td class="cname">${displayName(p.name)}</td>`+
+        `<td class="num ${shadeClass(p.ksi,'ksi')}">${fmt(p.ksi)}</td>`+
+        `<td class="num ${shadeClass(p.fatal,'fatal')}">${fmt(p.fatal)}</td>`+
+        `<td class="num ${shadeClass(p.serious,'serious')}">${fmt(p.serious)}</td>`+
+        `<td class="num ${shadeClass(p.ped,'ped')}">${fmt(p.ped)}</td>`+
+        `<td class="num ${shadeClass(p.bike,'bike')}">${fmt(p.bike)}</td>`+
+        `<td class="num ${shadeClass(p.per_mile,'per_mile')}">${fmt(p.per_mile)}</td>`+
+        `<td class="num">${fmt(p.miles)}</td>`;
+      tr.addEventListener('click',()=>selectCorridorFromTable(row));
+      tbody.appendChild(tr);
+    });
+    table.querySelectorAll('th').forEach(th=>{
+      th.classList.remove('sorted-asc','sorted-desc');
+      if(th.dataset.k===sortKey) th.classList.add(sortDir==='asc'?'sorted-asc':'sorted-desc');
+    });
+  }
+
+  function selectCorridorFromTable(row){
+    const name=row.p.name, p=row.p;
+    // clear any 14-corridor selection so the two don't coexist
+    if(map.getLayer('corridor-casing')) map.setFilter('corridor-casing',['==','OBJECTID',-1]);
+    if(map.getLayer('corridors-all-hl')) map.setFilter('corridors-all-hl',['==','name',name]);
+    // populate + show the floating readout card
+    document.getElementById('cr-name').textContent=displayName(name);
+    document.getElementById('cr-ksi').textContent=fmt(p.ksi);
+    document.getElementById('cr-fatal').textContent=fmt(p.fatal);
+    document.getElementById('cr-serious').textContent=fmt(p.serious);
+    document.getElementById('cr-ped').textContent=fmt(p.ped);
+    document.getElementById('cr-bike').textContent=fmt(p.bike);
+    document.getElementById('cr-permile').textContent=fmt(p.per_mile);
+    document.getElementById('corr-readout').classList.add('show');
+    const coords=[]; const g=row.f.geometry;
+    if(g.type==='LineString') coords.push(...g.coordinates);
+    else g.coordinates.forEach(part=>coords.push(...part));
+    if(coords.length){
+      let minx=Infinity,miny=Infinity,maxx=-Infinity,maxy=-Infinity;
+      coords.forEach(c=>{ if(c[0]<minx)minx=c[0]; if(c[0]>maxx)maxx=c[0]; if(c[1]<miny)miny=c[1]; if(c[1]>maxy)maxy=c[1]; });
+      closeData();
+      map.fitBounds([[minx,miny],[maxx,maxy]],{padding:80,duration:900,maxZoom:14});
+    } else { closeData(); }
+  }
+
+  function openData(){ loadData().then(()=>{ render(); dataWrap.classList.add('open'); }); }
+  function closeData(){ dataWrap.classList.remove('open'); }
+
+  document.getElementById('data-btn').addEventListener('click',openData);
+  document.getElementById('data-close').addEventListener('click',closeData);
+  dataWrap.addEventListener('click',e=>{ if(e.target===dataWrap) closeData(); });
+  document.addEventListener('keydown',e=>{ if(e.key==='Escape') closeData(); });
+  document.getElementById('corr-readout-x').addEventListener('click',()=>{
+    document.getElementById('corr-readout').classList.remove('show');
+    if(map.getLayer('corridors-all-hl')) map.setFilter('corridors-all-hl',['==','name','__none__']);
+  });
+
+  table.querySelectorAll('th').forEach(th=>{
+    th.addEventListener('click',()=>{
+      const k=th.dataset.k;
+      if(sortKey===k){ sortDir = sortDir==='asc'?'desc':'asc'; }
+      else { sortKey=k; sortDir = (k==='name')?'asc':'desc'; }
+      render();
+    });
+  });
+})();
+
+</script>
+</body>
+</html>
